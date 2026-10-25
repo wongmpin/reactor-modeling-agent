@@ -1,0 +1,273 @@
+{
+  "kind": "actual local HYSYS execution evidence; test inputs only",
+  "spec": {
+    "task_id": "5e71fddb-0f18-47b1-aa8e-714dc20fc224",
+    "version": 4,
+    "user_request": "甲烷蒸汽重整测试：天然气按纯甲烷，甲烷100 kmol/h、蒸汽270 kmol/h；8000 h/a，甲烷约12834 t/a；无固相、无压降；这些是假设，现场需确认。 甲烷:水蒸气=1:2.7，遵循原始考核要求。 仅对本次集成测试确认 annual_operating_hours=8000、methane_annual_throughput=12834 t/a、no_pressure_drop=true、no_solid_phase=true，确认 Peng-Robinson 与 HYSYS V15 数据库，完整物种仅CH4/H2O/CO/CO2/H2。请求按此测试规格运行600°C温度工况，不提供Ka或Gibbs能数值。将这些已有假设标为本次测试已确认；不代表实际工厂数据或录屏者的工程批准。",
+    "feed": {
+      "name": "Feed",
+      "components": [
+        {
+          "name": "Methane",
+          "formula": "CH4",
+          "value": 0.27027027027027023
+        },
+        {
+          "name": "H2O",
+          "formula": "H2O",
+          "value": 0.7297297297297297
+        }
+      ],
+      "composition_basis": "mole_fraction",
+      "flow": 370.0,
+      "flow_unit": "kmol/h",
+      "flow_basis": "molar",
+      "temperature": 520.0,
+      "temperature_unit": "degC",
+      "pressure": 13.5,
+      "pressure_unit": "bar"
+    },
+    "reactions": [
+      {
+        "name": null,
+        "reactants": [
+          {
+            "component": "Methane",
+            "formula": "CH4",
+            "coefficient": 1.0
+          },
+          {
+            "component": "H2O",
+            "formula": "H2O",
+            "coefficient": 1.0
+          }
+        ],
+        "products": [
+          {
+            "component": "CO",
+            "formula": "CO",
+            "coefficient": 1.0
+          },
+          {
+            "component": "Hydrogen",
+            "formula": "H2",
+            "coefficient": 3.0
+          }
+        ],
+        "phase": "vapor",
+        "basis_component": null,
+        "conversion": null
+      },
+      {
+        "name": null,
+        "reactants": [
+          {
+            "component": "CO",
+            "formula": "CO",
+            "coefficient": 1.0
+          },
+          {
+            "component": "H2O",
+            "formula": "H2O",
+            "coefficient": 1.0
+          }
+        ],
+        "products": [
+          {
+            "component": "CO2",
+            "formula": "CO2",
+            "coefficient": 1.0
+          },
+          {
+            "component": "Hydrogen",
+            "formula": "H2",
+            "coefficient": 1.0
+          }
+        ],
+        "phase": "vapor",
+        "basis_component": null,
+        "conversion": null
+      }
+    ],
+    "allowed_species": [],
+    "reactor_type": "gibbs",
+    "reactor_rationale": "用户明确声明使用 HYSYS V15 纯组分热力学数据库，给出了完整的物种集合（CH4/H2O/CO/CO2/H2），并排除了固相；因此对于这个可逆、强吸热的甲烷蒸汽重整体系，可以在该物种集合上使用 Gibbs 自由能最小化。数据中未提供动力学模型、反应器体积或转化率/收率/选择性指标，排除 CSTR、PFR 与 conversion；equilibrium 需要 Ka(T) 或反应 Gibbs 能数值，而用户未提供。数据满足对已声明的气相物种集合进行 Gibbs 建模的条件；有效性取决于已确认的无固相假设和数据库覆盖范围，并非普适的平衡结论。",
+    "thermo": {
+      "property_package": "Peng-Robinson",
+      "rationale": "Demonstration choice; suitability must be confirmed for actual use.",
+      "thermodynamic_data_source": "Aspen HYSYS V15 pure-component databank; vapor species listed in specification; no solids"
+    },
+    "known_parameters": {
+      "thermal_mode": "specified_temperature",
+      "conversion": null,
+      "selectivity": {},
+      "equilibrium_constant": null,
+      "gibbs_energy_kj_per_mol": null,
+      "kinetic_model": null,
+      "reactor_volume_m3": null,
+      "target_outlet_temperature": 600.0,
+      "target_outlet_temperature_unit": "degC",
+      "target_pressure": 13.5,
+      "target_pressure_unit": "bar"
+    },
+    "assumptions": [
+      {
+        "key": "annual_operating_hours",
+        "value": "8000",
+        "rationale": "用户请求中提出 8000 h/a，但标注为假设，现场需确认。",
+        "confirmed_by_user": true,
+        "impact": "影响年产能与流量一致性核算，未确认前不用于最终设计。"
+      },
+      {
+        "key": "methane_annual_throughput",
+        "value": "12834 t/a",
+        "rationale": "用户请求中给出甲烷约 12834 t/a，但标注为假设，现场需确认。",
+        "confirmed_by_user": true,
+        "impact": "用于校验进料流量与年产能的一致性，未确认前不用于最终设计。"
+      },
+      {
+        "key": "no_pressure_drop",
+        "value": "true",
+        "rationale": "用户请求中声明无压降，但标注为假设，现场需确认。",
+        "confirmed_by_user": true,
+        "impact": "影响反应器压降建模与出口压力设定，未确认前按无压降处理。"
+      },
+      {
+        "key": "no_solid_phase",
+        "value": "true",
+        "rationale": "用户请求与澄清中均声明无固相、排除固体碳，但该声明仍需现场确认。",
+        "confirmed_by_user": true,
+        "impact": "影响 Gibbs 物种全集与热力学数据覆盖范围，未确认前按无固相处理。"
+      }
+    ],
+    "missing_information": [],
+    "created_at": "2026-10-25T11:04:04.962842Z",
+    "parent_version": 3
+  },
+  "result": {
+    "task_id": "5e71fddb-0f18-47b1-aa8e-714dc20fc224",
+    "spec_version": 4,
+    "run_id": "1304556d-d5ef-4e85-b584-ba35200197bb",
+    "case_created": true,
+    "solver_converged": true,
+    "engineering_validation_passed": true,
+    "hysys_version": "Aspen HYSYS Version 15 (41.0)",
+    "case_path": "C:\\Users\\azureuser\\Desktop\\demo\\data\\cases\\2a84e07f-13c9-4884-bb65-d3afe1e200a3-attempt1.hsc",
+    "streams": [
+      {
+        "name": "Feed",
+        "temperature_k": 793.15,
+        "pressure_kpa": 1350.0,
+        "molar_flow_kmol_h": 370.0,
+        "mole_fractions": {
+          "Methane": 0.27027027027027023,
+          "H2O": 0.7297297297297297,
+          "CO": 0.0,
+          "Hydrogen": 0.0,
+          "CO2": 0.0
+        }
+      },
+      {
+        "name": "Vapour Product",
+        "temperature_k": 873.15,
+        "pressure_kpa": 1350.0,
+        "molar_flow_kmol_h": 430.70477079573425,
+        "mole_fractions": {
+          "Methane": 0.16170616005357383,
+          "H2O": 0.49764419470327403,
+          "CO": 0.011707554582967693,
+          "Hydrogen": 0.27017820527792813,
+          "CO2": 0.05876388538225627
+        }
+      },
+      {
+        "name": "Liquid Product",
+        "temperature_k": 873.15,
+        "pressure_kpa": 1350.0,
+        "molar_flow_kmol_h": 0.0,
+        "mole_fractions": {}
+      }
+    ],
+    "diagnostics": [],
+    "raw_summary": {
+      "operation_type": "gibbsreactorop",
+      "calc_level": 500,
+      "is_solving": false,
+      "outputs_known": true,
+      "variables_inconsistent": false,
+      "property_package": "Peng-Robinson",
+      "component_mapping": {
+        "Methane": "Methane",
+        "H2O": "H2O",
+        "CO": "CO",
+        "Hydrogen": "Hydrogen",
+        "CO2": "CO2"
+      },
+      "duty_kw": 2015.9497956883697,
+      "thermodynamic_data_source": "Aspen HYSYS V15 pure-component databank; vapor species listed in specification; no solids"
+    },
+    "created_at": "2026-10-25T11:12:33.529733Z"
+  },
+  "audit": [
+    {
+      "event_type": "spec_version_created",
+      "summary": "Created specification version 2",
+      "created_at": "2026-10-25T11:08:30.965463+00:00"
+    },
+    {
+      "event_type": "model_decision",
+      "summary": "{\"model\": \"deepseek-flash\", \"reactor\": \"equilibrium\", \"rationale\": \"该请求为甲烷蒸汽重整（可逆、强吸热），包含两个气-固催化反应；未提供动力学模型、反应器体积或转化率/选择性指标，因此无法选择 CSTR/PFR 或 conversion。虽然当前规格未给出平衡常数或 Gibbs 能数值，但已指定热力学数据源（HYSYS V15 纯组分数据库、Peng-Robinson、仅气态物种、无固相），用户可直接确认该热力学数据覆盖所列物种，并允许由 Gibbs 能推算多反应平衡。故最合适的候选为 equilibrium（按明确确认的热力学数据计算多反应平衡）；若需严格的 Gibbs 自由能最小化，也可作为 gibbs 候选，但须确认完整物种清单（包含可能生成的 CH4/H2O/CO/CO2/H2 等固体碳排除项）。\"}",
+      "created_at": "2026-10-25T11:08:30.975464+00:00"
+    },
+    {
+      "event_type": "workflow_finished",
+      "summary": "Workflow status: needs_input",
+      "created_at": "2026-10-25T11:08:30.984456+00:00"
+    },
+    {
+      "event_type": "spec_version_created",
+      "summary": "Created specification version 3",
+      "created_at": "2026-10-25T11:10:26.889327+00:00"
+    },
+    {
+      "event_type": "model_decision",
+      "summary": "{\"model\": \"deepseek-flash\", \"spec_hash\": \"5d03cbc6772fc6e921be940234732f6fc192fc1bd56a588c5f01e06858fc9451\", \"version\": 3, \"reactor\": \"gibbs\", \"rationale\": \"用户已明确授权使用 HYSYS V15 纯组分热力学数据库（thermo.thermodynamic_data_source），并确认了完整物种集合：仅 CH4/H2O/CO/CO2/H2，明确排除固体碳；同时明确不提供平衡常数与 Gibbs 能数值。对于甲烷蒸汽重整这一可逆、强吸热、多反应的气固催化体系，在缺少动力学模型、反应器体积、转化率/收率/选择性等工艺指标的情况下，无法据此选 conversion、CSTR 或 PFR；equilibrium 反应器需要用户提供 Ka(T) 或反应 Gibbs 能数值，而用户未提供。Gibbs 反应器可通过给定物种集合与数据库热力学数据进行 Gibbs 自由能最小化，满足当前数据完整建模的条件，因此选择 gibbs。需注意，该选择目前针对所声明的气态物种集合与数据库覆盖范围，其有效性取决于现场确认无固相（碳）及热力学数据适用性。\"}",
+      "created_at": "2026-10-25T11:10:26.900325+00:00"
+    },
+    {
+      "event_type": "workflow_finished",
+      "summary": "Workflow status: needs_input",
+      "created_at": "2026-10-25T11:10:26.909327+00:00"
+    },
+    {
+      "event_type": "spec_version_created",
+      "summary": "Created specification version 4",
+      "created_at": "2026-10-25T11:12:26.012964+00:00"
+    },
+    {
+      "event_type": "model_decision",
+      "summary": "{\"model\": \"deepseek-flash\", \"spec_hash\": \"afc0a4cd21b5bf4baf8da971d7cbdf809ef7810c8fe547bdec59484f9b3e70d1\", \"version\": 4, \"reactor\": \"gibbs\", \"rationale\": \"用户明确声明使用 HYSYS V15 纯组分热力学数据库，给出了完整的物种集合（CH4/H2O/CO/CO2/H2），并排除了固相；因此对于这个可逆、强吸热的甲烷蒸汽重整体系，可以在该物种集合上使用 Gibbs 自由能最小化。数据中未提供动力学模型、反应器体积或转化率/收率/选择性指标，排除 CSTR、PFR 与 conversion；equilibrium 需要 Ka(T) 或反应 Gibbs 能数值，而用户未提供。数据满足对已声明的气相物种集合进行 Gibbs 建模的条件；有效性取决于已确认的无固相假设和数据库覆盖范围，并非普适的平衡结论。\"}",
+      "created_at": "2026-10-25T11:12:26.026956+00:00"
+    },
+    {
+      "event_type": "workflow_finished",
+      "summary": "Workflow status: spec_validated",
+      "created_at": "2026-10-25T11:12:26.036892+00:00"
+    },
+    {
+      "event_type": "queued",
+      "summary": "Queued execution request 92e38d99-291f-4ae4-bfe1-62b573510ea0",
+      "created_at": "2026-10-25T11:12:29.933529+00:00"
+    },
+    {
+      "event_type": "hysys_tool_call",
+      "summary": "run_model version=4 attempt=1",
+      "created_at": "2026-10-25T11:12:33.488747+00:00"
+    },
+    {
+      "event_type": "run_recorded",
+      "summary": "Run 1304556d-d5ef-4e85-b584-ba35200197bb recorded as validated",
+      "created_at": "2026-10-25T11:12:34.448434+00:00"
+    }
+  ]
+}

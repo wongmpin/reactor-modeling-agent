@@ -1,0 +1,191 @@
+{
+  "kind": "actual local HYSYS execution evidence; test inputs only",
+  "spec": {
+    "task_id": "a577df0f-a5cb-4192-a80e-051389d0c4cc",
+    "version": 2,
+    "user_request": "本次仅进行通用案例集成测试：气相乙烯加氢 C2H4+H2->C2H6，乙烯与氢气各50 kmol/h，进料150°C、10bar，以乙烯为基准指定转化率40%，不提供动力学参数。确认采用Peng-Robinson物性方法，无压降，出口150°C等温，HYSYS纯组分数据库。已确认上述测试工况，请独立选择合适反应器并说明依据，不需要真实工厂设备体积。",
+    "feed": {
+      "name": "Feed",
+      "components": [
+        {
+          "name": "Ethylene",
+          "formula": "C2H4",
+          "value": 0.5
+        },
+        {
+          "name": "Hydrogen",
+          "formula": "H2",
+          "value": 0.5
+        }
+      ],
+      "composition_basis": "mole_fraction",
+      "flow": 100.0,
+      "flow_unit": "kmol/h",
+      "flow_basis": "molar",
+      "temperature": 150.0,
+      "temperature_unit": "degC",
+      "pressure": 10.0,
+      "pressure_unit": "bar"
+    },
+    "reactions": [
+      {
+        "name": "Ethylene hydrogenation",
+        "reactants": [
+          {
+            "component": "Ethylene",
+            "formula": "C2H4",
+            "coefficient": 1.0
+          },
+          {
+            "component": "Hydrogen",
+            "formula": "H2",
+            "coefficient": 1.0
+          }
+        ],
+        "products": [
+          {
+            "component": "Ethane",
+            "formula": "C2H6",
+            "coefficient": 1.0
+          }
+        ],
+        "phase": "vapor",
+        "basis_component": "Ethylene",
+        "conversion": 0.4
+      }
+    ],
+    "allowed_species": [],
+    "reactor_type": "conversion",
+    "reactor_rationale": "该反应为气相乙烯加氢，化学计量关系已知，且乙烯基准转化率已指定为40%，但未提供任何动力学参数或设备尺寸。如果直接按指定的转化率建模，转化反应器是合适选择，因为它直接使用转化率，不需要动力学、保留时间或反应器体积数据；等温150°C且无压降与所声明的热模式及后端能力一致。由于没有提供平衡常数或反应Gibbs能数值，平衡反应器和Gibbs反应器不合适；CSTR和PFR需要动力学及设备参数，而这些未给出。",
+    "thermo": {
+      "property_package": "Peng-Robinson",
+      "rationale": "User confirmed Peng-Robinson for this test case.",
+      "thermodynamic_data_source": "HYSYS V15 pure-component thermodynamic databank"
+    },
+    "known_parameters": {
+      "thermal_mode": "specified_temperature",
+      "conversion": 0.4,
+      "selectivity": {},
+      "equilibrium_constant": null,
+      "gibbs_energy_kj_per_mol": null,
+      "kinetic_model": null,
+      "reactor_volume_m3": null,
+      "target_outlet_temperature": 150.0,
+      "target_outlet_temperature_unit": "degC",
+      "target_pressure": 10.0,
+      "target_pressure_unit": "bar"
+    },
+    "assumptions": [
+      {
+        "key": "no_pressure_drop",
+        "value": "true",
+        "rationale": "User confirmed no pressure drop for the test case.",
+        "confirmed_by_user": true,
+        "impact": "Outlet pressure equals inlet pressure (10 bar)."
+      },
+      {
+        "key": "isothermal_operation",
+        "value": "true",
+        "rationale": "User confirmed outlet temperature 150°C isothermal.",
+        "confirmed_by_user": true,
+        "impact": "Thermal mode set to specified_temperature at 150°C."
+      }
+    ],
+    "missing_information": [],
+    "created_at": "2026-10-25T12:00:00Z",
+    "parent_version": 1
+  },
+  "result": {
+    "task_id": "a577df0f-a5cb-4192-a80e-051389d0c4cc",
+    "spec_version": 2,
+    "run_id": "cc8861ce-33a9-4c2d-a11e-354e98a2f739",
+    "case_created": true,
+    "solver_converged": true,
+    "engineering_validation_passed": true,
+    "hysys_version": "Aspen HYSYS Version 15 (41.0)",
+    "case_path": "C:\\Users\\azureuser\\Desktop\\demo\\data\\cases\\cc6c0dd2-a2f3-4e15-a71b-104db7c9653d-attempt1.hsc",
+    "streams": [
+      {
+        "name": "Feed",
+        "temperature_k": 423.15,
+        "pressure_kpa": 1000.0,
+        "molar_flow_kmol_h": 100.0,
+        "mole_fractions": {
+          "Ethylene": 0.5,
+          "Hydrogen": 0.5,
+          "Ethane": 0.0
+        }
+      },
+      {
+        "name": "Vapour Product",
+        "temperature_k": 423.15,
+        "pressure_kpa": 1000.0,
+        "molar_flow_kmol_h": 79.99999999999999,
+        "mole_fractions": {
+          "Ethylene": 0.37499999999999994,
+          "Hydrogen": 0.37499999999999994,
+          "Ethane": 0.25000000000000006
+        }
+      },
+      {
+        "name": "Liquid Product",
+        "temperature_k": 423.15,
+        "pressure_kpa": 1000.0,
+        "molar_flow_kmol_h": 0.0,
+        "mole_fractions": {}
+      }
+    ],
+    "diagnostics": [],
+    "raw_summary": {
+      "operation_type": "conversionreactorop",
+      "calc_level": 500,
+      "is_solving": false,
+      "outputs_known": true,
+      "variables_inconsistent": false,
+      "property_package": "Peng-Robinson",
+      "component_mapping": {
+        "Ethylene": "Ethylene",
+        "Hydrogen": "Hydrogen",
+        "Ethane": "Ethane"
+      },
+      "duty_kw": -774.0942765873799,
+      "thermodynamic_data_source": "HYSYS V15 pure-component thermodynamic databank",
+      "hysys_conversion_percent": [
+        40.0
+      ]
+    },
+    "created_at": "2026-10-25T11:15:40.286212Z"
+  },
+  "audit": [
+    {
+      "event_type": "spec_version_created",
+      "summary": "Created specification version 2",
+      "created_at": "2026-10-25T11:15:32.696925+00:00"
+    },
+    {
+      "event_type": "model_decision",
+      "summary": "{\"model\": \"deepseek-flash\", \"spec_hash\": \"f9002d3750fad3f50d8548ec075fed5f9ec816d8908b522fedbc6747cedec249\", \"version\": 2, \"reactor\": \"conversion\", \"rationale\": \"该反应为气相乙烯加氢，化学计量关系已知，且乙烯基准转化率已指定为40%，但未提供任何动力学参数或设备尺寸。如果直接按指定的转化率建模，转化反应器是合适选择，因为它直接使用转化率，不需要动力学、保留时间或反应器体积数据；等温150°C且无压降与所声明的热模式及后端能力一致。由于没有提供平衡常数或反应Gibbs能数值，平衡反应器和Gibbs反应器不合适；CSTR和PFR需要动力学及设备参数，而这些未给出。\"}",
+      "created_at": "2026-10-25T11:15:32.712935+00:00"
+    },
+    {
+      "event_type": "workflow_finished",
+      "summary": "Workflow status: spec_validated",
+      "created_at": "2026-10-25T11:15:32.727059+00:00"
+    },
+    {
+      "event_type": "queued",
+      "summary": "Queued execution request 566ab926-5619-4a79-9446-ff2960923d23",
+      "created_at": "2026-10-25T11:15:36.587880+00:00"
+    },
+    {
+      "event_type": "hysys_tool_call",
+      "summary": "run_model version=2 attempt=1",
+      "created_at": "2026-10-25T11:15:40.238206+00:00"
+    },
+    {
+      "event_type": "run_recorded",
+      "summary": "Run cc8861ce-33a9-4c2d-a11e-354e98a2f739 recorded as validated",
+      "created_at": "2026-10-25T11:15:41.568850+00:00"
+    }
+  ]
+}

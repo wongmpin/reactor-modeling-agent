@@ -1,0 +1,79 @@
+{
+  "task_id": "a8fb5528-d3c3-4b90-9145-a863d3de9bde",
+  "version": 1,
+  "user_request": "通用实机测试：乙烯加氢，40%转化率。测试数据，不是现场用户确认条件。",
+  "feed": {
+    "name": "Feed",
+    "components": [
+      {
+        "name": "Ethylene",
+        "formula": "C2H4",
+        "value": 0.5
+      },
+      {
+        "name": "Hydrogen",
+        "formula": "H2",
+        "value": 0.5
+      }
+    ],
+    "composition_basis": "mole_fraction",
+    "flow": 100.0,
+    "flow_unit": "kmol/h",
+    "flow_basis": "molar",
+    "temperature": 150.0,
+    "temperature_unit": "degC",
+    "pressure": 10.0,
+    "pressure_unit": "bar"
+  },
+  "reactions": [
+    {
+      "name": null,
+      "reactants": [
+        {
+          "component": "Ethylene",
+          "formula": "C2H4",
+          "coefficient": 1.0
+        },
+        {
+          "component": "Hydrogen",
+          "formula": "H2",
+          "coefficient": 1.0
+        }
+      ],
+      "products": [
+        {
+          "component": "Ethane",
+          "formula": "C2H6",
+          "coefficient": 1.0
+        }
+      ],
+      "phase": "vapor",
+      "basis_component": "Ethylene",
+      "conversion": null
+    }
+  ],
+  "reactor_type": null,
+  "reactor_rationale": null,
+  "thermo": {
+    "property_package": "Peng-Robinson",
+    "rationale": "Demonstration choice; suitability must be confirmed for actual use.",
+    "thermodynamic_data_source": "Aspen HYSYS V15 pure-component databank; vapor species listed in specification; no solids"
+  },
+  "known_parameters": {
+    "thermal_mode": "specified_temperature",
+    "conversion": 0.4,
+    "selectivity": {},
+    "equilibrium_constant": null,
+    "gibbs_energy_kj_per_mol": null,
+    "kinetic_model": null,
+    "reactor_volume_m3": null,
+    "target_outlet_temperature": 150.0,
+    "target_outlet_temperature_unit": "degC",
+    "target_pressure": 10.0,
+    "target_pressure_unit": "bar"
+  },
+  "assumptions": [],
+  "missing_information": [],
+  "created_at": "2026-10-25T11:04:04.960854Z",
+  "parent_version": null
+}

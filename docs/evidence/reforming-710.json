@@ -1,0 +1,214 @@
+{
+  "kind": "actual local HYSYS execution evidence; test inputs only",
+  "spec": {
+    "task_id": "a47b02b9-c393-4dca-a957-d5344bd1b03d",
+    "version": 2,
+    "user_request": "甲烷蒸汽重整测试：天然气按纯甲烷，甲烷100 kmol/h、蒸汽270 kmol/h；8000 h/a，甲烷约12834 t/a；无固相、无压降；这些是假设，现场需确认。 甲烷:水蒸气=1:2.7，遵循原始考核要求。",
+    "feed": {
+      "name": "Feed",
+      "components": [
+        {
+          "name": "Methane",
+          "formula": "CH4",
+          "value": 0.27027027027027023
+        },
+        {
+          "name": "H2O",
+          "formula": "H2O",
+          "value": 0.7297297297297297
+        }
+      ],
+      "composition_basis": "mole_fraction",
+      "flow": 370.0,
+      "flow_unit": "kmol/h",
+      "flow_basis": "molar",
+      "temperature": 520.0,
+      "temperature_unit": "degC",
+      "pressure": 13.5,
+      "pressure_unit": "bar"
+    },
+    "reactions": [
+      {
+        "name": null,
+        "reactants": [
+          {
+            "component": "Methane",
+            "formula": "CH4",
+            "coefficient": 1.0
+          },
+          {
+            "component": "H2O",
+            "formula": "H2O",
+            "coefficient": 1.0
+          }
+        ],
+        "products": [
+          {
+            "component": "CO",
+            "formula": "CO",
+            "coefficient": 1.0
+          },
+          {
+            "component": "Hydrogen",
+            "formula": "H2",
+            "coefficient": 3.0
+          }
+        ],
+        "phase": "vapor",
+        "basis_component": null,
+        "conversion": null
+      },
+      {
+        "name": null,
+        "reactants": [
+          {
+            "component": "CO",
+            "formula": "CO",
+            "coefficient": 1.0
+          },
+          {
+            "component": "H2O",
+            "formula": "H2O",
+            "coefficient": 1.0
+          }
+        ],
+        "products": [
+          {
+            "component": "CO2",
+            "formula": "CO2",
+            "coefficient": 1.0
+          },
+          {
+            "component": "Hydrogen",
+            "formula": "H2",
+            "coefficient": 1.0
+          }
+        ],
+        "phase": "vapor",
+        "basis_component": null,
+        "conversion": null
+      }
+    ],
+    "allowed_species": [],
+    "reactor_type": "gibbs",
+    "reactor_rationale": "该反应体系为可逆的甲烷蒸汽重整耦合水煤气变换，未提供动力学模型或设备参数，故不选 CSTR/PFR；未给出转化率、收率或选择性，故不选 conversion；未提供平衡常数，但已声明使用 HYSYS V15 纯组分热力学数据库并完整覆盖气相物种（CH4/H2O/CO/CO2/H2），且指定 Peng-Robinson 与无固相，满足热力学数据与组分覆盖充分的 Gibbs 候选条件。仍需用户明确确认热力学数据来源与封闭物种范围，并补充换热/热模式对应的热负荷或绝热假设之后方可执行。",
+    "thermo": {
+      "property_package": "Peng-Robinson",
+      "rationale": "Demonstration choice; suitability must be confirmed for actual use.",
+      "thermodynamic_data_source": "Aspen HYSYS V15 pure-component databank; vapor species listed in specification; no solids"
+    },
+    "known_parameters": {
+      "thermal_mode": "specified_temperature",
+      "conversion": null,
+      "selectivity": {},
+      "equilibrium_constant": null,
+      "gibbs_energy_kj_per_mol": null,
+      "kinetic_model": null,
+      "reactor_volume_m3": null,
+      "target_outlet_temperature": 710.0,
+      "target_outlet_temperature_unit": "degC",
+      "target_pressure": 13.5,
+      "target_pressure_unit": "bar"
+    },
+    "assumptions": [],
+    "missing_information": [],
+    "created_at": "2026-10-25T11:04:04.962842Z",
+    "parent_version": 1
+  },
+  "result": {
+    "task_id": "a47b02b9-c393-4dca-a957-d5344bd1b03d",
+    "spec_version": 2,
+    "run_id": "4ece9221-2133-4dd7-b5e6-e8dc36afef17",
+    "case_created": true,
+    "solver_converged": true,
+    "engineering_validation_passed": true,
+    "hysys_version": "Aspen HYSYS Version 15 (41.0)",
+    "case_path": "C:\\Users\\azureuser\\Desktop\\demo\\data\\cases\\e77d9339-3e27-464a-8554-83ec602bf372-attempt1.hsc",
+    "streams": [
+      {
+        "name": "Feed",
+        "temperature_k": 793.15,
+        "pressure_kpa": 1350.0,
+        "molar_flow_kmol_h": 370.0,
+        "mole_fractions": {
+          "Methane": 0.27027027027027023,
+          "H2O": 0.7297297297297297,
+          "CO": 0.0,
+          "Hydrogen": 0.0,
+          "CO2": 0.0
+        }
+      },
+      {
+        "name": "Vapour Product",
+        "temperature_k": 983.15,
+        "pressure_kpa": 1350.0,
+        "molar_flow_kmol_h": 478.0716182463245,
+        "mole_fractions": {
+          "Methane": 0.09614498983529887,
+          "H2O": 0.3844411145915288,
+          "CO": 0.045729558470155834,
+          "Hydrogen": 0.40638520476450674,
+          "CO2": 0.06729913233850982
+        }
+      },
+      {
+        "name": "Liquid Product",
+        "temperature_k": 983.15,
+        "pressure_kpa": 1350.0,
+        "molar_flow_kmol_h": 0.0,
+        "mole_fractions": {}
+      }
+    ],
+    "diagnostics": [],
+    "raw_summary": {
+      "operation_type": "gibbsreactorop",
+      "calc_level": 500,
+      "is_solving": false,
+      "outputs_known": true,
+      "variables_inconsistent": false,
+      "property_package": "Peng-Robinson",
+      "component_mapping": {
+        "Methane": "Methane",
+        "H2O": "H2O",
+        "CO": "CO",
+        "Hydrogen": "Hydrogen",
+        "CO2": "CO2"
+      },
+      "duty_kw": 3998.861455780343,
+      "thermodynamic_data_source": "Aspen HYSYS V15 pure-component databank; vapor species listed in specification; no solids"
+    },
+    "created_at": "2026-10-25T11:08:06.836761Z"
+  },
+  "audit": [
+    {
+      "event_type": "spec_version_created",
+      "summary": "Created specification version 2",
+      "created_at": "2026-10-25T11:07:39.486909+00:00"
+    },
+    {
+      "event_type": "model_decision",
+      "summary": "{\"model\": \"deepseek-flash\", \"reactor\": \"gibbs\", \"rationale\": \"该反应体系为可逆的甲烷蒸汽重整耦合水煤气变换，未提供动力学模型或设备参数，故不选 CSTR/PFR；未给出转化率、收率或选择性，故不选 conversion；未提供平衡常数，但已声明使用 HYSYS V15 纯组分热力学数据库并完整覆盖气相物种（CH4/H2O/CO/CO2/H2），且指定 Peng-Robinson 与无固相，满足热力学数据与组分覆盖充分的 Gibbs 候选条件。仍需用户明确确认热力学数据来源与封闭物种范围，并补充换热/热模式对应的热负荷或绝热假设之后方可执行。\"}",
+      "created_at": "2026-10-25T11:07:39.500914+00:00"
+    },
+    {
+      "event_type": "workflow_finished",
+      "summary": "Workflow status: spec_validated",
+      "created_at": "2026-10-25T11:07:39.510906+00:00"
+    },
+    {
+      "event_type": "queued",
+      "summary": "Queued execution request f9471808-c153-452c-9d3e-da151c18e357",
+      "created_at": "2026-10-25T11:07:51.612138+00:00"
+    },
+    {
+      "event_type": "hysys_tool_call",
+      "summary": "run_model version=2 attempt=1",
+      "created_at": "2026-10-25T11:08:06.797756+00:00"
+    },
+    {
+      "event_type": "run_recorded",
+      "summary": "Run 4ece9221-2133-4dd7-b5e6-e8dc36afef17 recorded as validated",
+      "created_at": "2026-10-25T11:08:07.973475+00:00"
+    }
+  ]
+}

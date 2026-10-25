@@ -1,0 +1,29 @@
+# 化工反应器建模 Agent 技术报告
+
+2026-10-25 · 本地 Windows / Aspen HYSYS V15 / DeepSeek V4.1 Flash
+
+## 目标与方案
+
+系统将自然语言需求转为结构化模型规格，由 DeepSeek 根据反应特征、可用数据和领域规则判断反应器，并解释依据。Harness 检查数据充分性、假设确认、后端支持范围和版本对应的模型决策；不会按场景名映射反应器，也不会把不支持的模型静默替换。Streamlit 通过应用服务读写任务，不直接访问 COM。LangGraph 管理解析、选型、校验、补参 interrupt/resume、执行、独立结果校验和最多两次可重试调用。
+
+首版采用 Python 3.12、Pydantic/Pint、LangGraph、Streamlit、FastMCP 和 SQLite。SQLite 的 WAL、busy timeout 和短事务适合单机跨进程队列，省去数据库服务器、Redis 和容器依赖。任务规格、不可变版本、运行、checkpoint 与审计分别保存；聊天文本不充当建模数据。MCP 提供领域 Schema 工具，Skill 提供领域步骤，Harness 管权限与校验，Worker/Adapter 执行实际模拟。
+
+## HYSYS 探索与解决
+
+本机 COM 注册到 HYSYS V15，实测版本为 Aspen HYSYS Version 15 (41.0)。初期错误来自显示名称与内部标识混淆：物性包应使用 PengRob，反应器操作应使用 ConversionReactorOp / GibbsReactorOp。新案例初始处于 basis mode，必须完成物性包与反应关联并 EndBasisChange，才能写物流参数。将 E_INVALIDARG 或 E_ACCESSDENIED 当作环境完全不可用是不正确的，需结合本地官方帮助和逐步读回验证。
+
+实现每次从空案例新建独立模型、设置组分/反应/边界、读取物流、保存案例；每个 COM 会话使用独立子进程 STA 主线程，Windows 文件锁在进程间串行保护会话。COM 对象与脚本执行不暴露给模型。每次结果分别记录 case_created、solver_converged、engineering_validation_passed，求解收敛需操作 CalcLevel=500、输出已知、求解停止且无变量不一致，之后再检查元素守恒、流量、转化率和出口温压。超时终止 Python Worker，但不强杀用户 HYSYS；需检查 HYSYS 是否仍在计算。
+
+## 实测结果与可信范围
+
+四组测试经实际 HYSYS 计算，案例均可重开：乙烯加氢以乙烯为基准转化率40%，出口摩尔分数乙烯0.375、氢气0.375、乙烷0.250；甲苯歧化10000 kg/h、380°C、25 bar、50%转化率，在测试给定二甲苯比例0.2/0.5/0.3时，出口甲苯0.5、苯0.25、邻/间/对二甲苯0.05/0.125/0.075。该异构体比例仅是显式集成测试数据，不是由计量式推出，也不代表现场用户批准。
+
+甲烷:蒸汽=1:2.7，甲烷100 kmol/h、蒸汽270 kmol/h，进料520°C、出口13.5 bar；纯甲烷约12834 t/a、8000 h/a作为测试假设。Gibbs物种限CH4/H2O/CO/CO2/H2、排除固体碳、Peng-Robinson和HYSYS数据库。710°C出口H2约0.40639、CH4约0.09614；600°C出口H2约0.27018、CH4约0.16171。完整湿基组分和工况见docs/evidence，数值来自HYSYS读取，不是应用内计算器预设。Gibbs结果是所选物种与物性方法下的平衡估算，不包含催化剂动力学、结焦或实际反应炉传热限制。
+
+DeepSeek官方当前文档列出deepseek-flash对应V4.1 Flash 1017并支持JSON和工具调用；本机已完成真实JSON、工具参数及工具结果回传验证。默认关闭thinking以兼容工具探针。JSON偶发空返回按官方提示最多重试一次，失败保留诊断。API key仅从环境加载，不写日志和Git。
+
+## 验证与交付边界
+
+离线测试覆盖单位、反应/边界守恒、缺参、选择性、任务版本隔离、SQLite原子队列、interrupt/resume、有限重试、模型决策版本授权、MCP Schema和Streamlit恢复交互；实机测试覆盖四组真实求解/重开与未知组分故障，另有自然语言到模型选型再到真实求解验证。测试方法区分固定反应器的Adapter集成测试与真正模型选型链路。
+
+当前支持PR物性包、气相单反应conversion与指定物种Gibbs；equilibrium、CSTR/PFR、多条conversion顺序/竞争反应、固相/电解质和动态工况未纳入已验证能力。尤其equilibrium的LnKSource写入与读回不一致，未据此宣称支持。GitHub远程仓库发布、现场工艺假设确认、视频录制由用户完成。已附启动/关闭脚本、演示单、可脱敏导出的AI开发记录和实测证据。

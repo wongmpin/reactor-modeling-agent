@@ -1,0 +1,114 @@
+{
+  "task_id": "327b04e9-bd57-4d2f-a108-b8dc0ac885f0",
+  "version": 1,
+  "user_request": "甲烷蒸汽重整测试：天然气按纯甲烷，甲烷100 kmol/h、蒸汽270 kmol/h；8000 h/a，甲烷约12834 t/a；无固相、无压降；这些是假设，现场需确认。 甲烷:水蒸气=1:2.7，遵循原始考核要求。",
+  "feed": {
+    "name": "Feed",
+    "components": [
+      {
+        "name": "Methane",
+        "formula": "CH4",
+        "value": 0.27027027027027023
+      },
+      {
+        "name": "H2O",
+        "formula": "H2O",
+        "value": 0.7297297297297297
+      }
+    ],
+    "composition_basis": "mole_fraction",
+    "flow": 370,
+    "flow_unit": "kmol/h",
+    "flow_basis": "molar",
+    "temperature": 520.0,
+    "temperature_unit": "degC",
+    "pressure": 13.5,
+    "pressure_unit": "bar"
+  },
+  "reactions": [
+    {
+      "name": null,
+      "reactants": [
+        {
+          "component": "Methane",
+          "formula": "CH4",
+          "coefficient": 1.0
+        },
+        {
+          "component": "H2O",
+          "formula": "H2O",
+          "coefficient": 1.0
+        }
+      ],
+      "products": [
+        {
+          "component": "CO",
+          "formula": "CO",
+          "coefficient": 1.0
+        },
+        {
+          "component": "Hydrogen",
+          "formula": "H2",
+          "coefficient": 3.0
+        }
+      ],
+      "phase": "vapor",
+      "basis_component": null,
+      "conversion": null
+    },
+    {
+      "name": null,
+      "reactants": [
+        {
+          "component": "CO",
+          "formula": "CO",
+          "coefficient": 1.0
+        },
+        {
+          "component": "H2O",
+          "formula": "H2O",
+          "coefficient": 1.0
+        }
+      ],
+      "products": [
+        {
+          "component": "CO2",
+          "formula": "CO2",
+          "coefficient": 1.0
+        },
+        {
+          "component": "Hydrogen",
+          "formula": "H2",
+          "coefficient": 1.0
+        }
+      ],
+      "phase": "vapor",
+      "basis_component": null,
+      "conversion": null
+    }
+  ],
+  "reactor_type": null,
+  "reactor_rationale": null,
+  "thermo": {
+    "property_package": "Peng-Robinson",
+    "rationale": "Demonstration choice; suitability must be confirmed for actual use.",
+    "thermodynamic_data_source": "Aspen HYSYS V15 pure-component databank; vapor species listed in specification; no solids"
+  },
+  "known_parameters": {
+    "thermal_mode": "specified_temperature",
+    "conversion": null,
+    "selectivity": {},
+    "equilibrium_constant": null,
+    "gibbs_energy_kj_per_mol": null,
+    "kinetic_model": null,
+    "reactor_volume_m3": null,
+    "target_outlet_temperature": 600.0,
+    "target_outlet_temperature_unit": "degC",
+    "target_pressure": 13.5,
+    "target_pressure_unit": "bar"
+  },
+  "assumptions": [],
+  "missing_information": [],
+  "created_at": "2026-10-25T11:04:04.962842Z",
+  "parent_version": null
+}

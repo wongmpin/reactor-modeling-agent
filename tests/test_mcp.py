@@ -20,7 +20,7 @@ def test_mcp_nested_spec_schema_and_safe_case_names(tmp_path):
     tools = asyncio.run(server.list_tools())
     validate = next(tool for tool in tools if tool.name == "validate_model")
     assert "spec" in validate.inputSchema["properties"]
-    assert validate.outputSchema is not None
+    assert "passed" in validate.outputSchema["properties"]
     for name in ["../other.hsc", "C:/other.hsc", "case:stream.hsc"]:
         assert PathLike(name).suffix == ""
 

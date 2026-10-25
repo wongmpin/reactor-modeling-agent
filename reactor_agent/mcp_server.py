@@ -8,6 +8,7 @@ from mcp.server.fastmcp import FastMCP
 
 from reactor_agent.domain.models import ReactorModelSpec, BackendCapabilities, SimulationResult
 from reactor_agent.domain.validation import validate_spec
+from reactor_agent.domain.tools import ValidationResponse, QueueResponse, CaseResponse, WorkflowResponse, AuditEvent
 from reactor_agent.hysys.worker import HysysWorker
 from reactor_agent.service import ReactorAgentService
 
@@ -30,55 +31,57 @@ def create_mcp_server(service: ReactorAgentService | None = None) -> FastMCP:
             worker.stop()
 
     @server.tool()
-    def validate_model(spec: ReactorModelSpec) -> dict[str, Any]:
+    def validate_model(spec: ReactorModelSpec) -> ValidationResponse:
         """Validate a ReactorModelSpec JSON document without modifying HYSYS."""
         try:
             report = validate_spec(spec)
-            return {"passed": report.passed, "errors": report.errors, "warnings": report.warnings}
+            return ValidationResponse(passed=report.passed, errors=report.errors, warnings=report.warnings)
         except Exception as exc:
-            return {"passed": False, "errors": [str(exc)], "warnings": []}
+            return ValidationResponse(passed=False, errors=[str(exc)])
 
     @server.tool()
-    def create_case(task_id: str, case_name: str) -> dict[str, Any]:
+    def create_case(task_id: str, case_name: str) -> CaseResponse:
         """Create and save an empty HYSYS case for diagnosis; does not configure a model."""
         if PathLike(case_name).suffix.lower() != ".hsc":
-            return {"ok": False, "error": "case_name must end in .hsc"}
+            return CaseResponse(ok=False, error="case_name must be a safe .hsc filename")
         service.database.get_spec(task_id)
         destination = service.data_dir / "cases" / case_name
         if destination.exists():
-            return {"ok": False, "error": "Destination already exists; choose an independent case name."}
+            return CaseResponse(ok=False, error="Destination already exists; choose an independent case name.")
         worker = HysysWorker()
         try:
             result = worker.create_empty_case(destination)
             service.database.audit(task_id, "empty_case_created", str(result["case_path"]))
-            return {"ok": True, **result, "model_built": False}
+            return CaseResponse(ok=True, **result)
         except Exception as exc:
-            return {"ok": False, "error": str(exc)}
+            return CaseResponse(ok=False, error=str(exc))
         finally:
             worker.stop()
 
     @server.tool()
-    def queue_model_run(task_id: str) -> dict[str, Any]:
+    def queue_model_run(task_id: str) -> QueueResponse:
         """Queue a validated model specification for the local execution worker."""
         try:
             queue_id = service.queue_execution(task_id)
-            return {"queued": True, "queue_id": queue_id}
+            return QueueResponse(queued=True, queue_id=queue_id)
         except Exception as exc:
-            return {"queued": False, "error": str(exc)}
+            return QueueResponse(queued=False, error=str(exc))
 
     @server.tool()
-    def get_task_audit(task_id: str) -> list[dict[str, Any]]:
+    def get_task_audit(task_id: str) -> list[AuditEvent]:
         """Read structured task audit events; conversation text is not the source of truth."""
-        return service.database.audit_events(task_id)
+        return [AuditEvent.model_validate(event) for event in service.database.audit_events(task_id)]
 
     @server.tool()
-    def interpret_request(request: str, task_id: str | None = None) -> dict[str, Any]:
+    def interpret_request(request: str, task_id: str | None = None) -> WorkflowResponse:
         """Parse a new task or resume an existing task, with model-driven reactor selection."""
         if task_id is None:
             task_id = service.create_task(request).task_id
-            return service.process_request(task_id, request=request)
-        current = service.database.get_spec(task_id)
-        return service.process_request(task_id, request=request, spec_json=current.model_dump_json())
+            output = service.process_request(task_id, request=request)
+        else:
+            current = service.database.get_spec(task_id)
+            output = service.process_request(task_id, request=request, spec_json=current.model_dump_json())
+        return WorkflowResponse.model_validate({key: output[key] for key in WorkflowResponse.model_fields if key in output})
 
     @server.tool()
     def get_model_spec(task_id: str, version: int | None = None) -> ReactorModelSpec:
