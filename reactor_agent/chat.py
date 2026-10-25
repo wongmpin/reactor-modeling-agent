@@ -107,7 +107,7 @@ class ChatApplication:
                 {"kind": "restored", "spec_version": spec.version}, event_key="restored")
         self.sync_results(task_id)
 
-    def send(self, task_id: str | None, text: str) -> str:
+    def send(self, task_id: str | None, text: str, on_token=None) -> str:
         text = text.strip()
         if not text:
             raise ValueError("请输入消息。")
@@ -135,7 +135,8 @@ class ChatApplication:
                                                    recent_runs=[{"status": row["status"],
                                                                  "spec": self.database.get_spec(task_id, row["spec_version"]).model_dump(mode="json"),
                                                                  "result": row["payload"]}
-                                                                for row in runs[:6]]))
+                                                                for row in runs[:6]],
+                                                   on_token=on_token))
             if decision is not None:
                 self.database.audit(task_id, "conversation_action", decision.action)
             if decision is not None and decision.action == "answer":

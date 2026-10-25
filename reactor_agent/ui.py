@@ -196,7 +196,12 @@ def conversation():
             st.markdown(prompt)
         with st.chat_message("assistant"):
             with st.status("正在理解本轮消息并核对条件…", expanded=True) as status:
-                active_id = application.send(task_id, prompt)
+                streamed = st.empty()
+                streamed_parts = []
+                def render_stream_chunk(chunk: str) -> None:
+                    streamed_parts.append(chunk)
+                    streamed.markdown("".join(streamed_parts))
+                active_id = application.send(task_id, prompt, on_token=render_stream_chunk)
                 status.update(label="已处理本轮消息", state="complete")
         st.session_state["pending_task_id"] = active_id
         st.rerun()

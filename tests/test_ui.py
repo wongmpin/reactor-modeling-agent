@@ -14,7 +14,7 @@ SCRIPT = Path(__file__).parents[1] / "reactor_agent" / "ui.py"
 def ui_service(tmp_path, monkeypatch):
     monkeypatch.setenv("REACTOR_AGENT_DATA_DIR", str(tmp_path))
     monkeypatch.setenv("REACTOR_AGENT_DB", str(tmp_path / "ui.sqlite3"))
-    monkeypatch.setattr(DeepSeekProvider, "conversation_reply", lambda self, spec, message, history, latest_run=None, recent_runs=None:
+    monkeypatch.setattr(DeepSeekProvider, "conversation_reply", lambda self, spec, message, history, latest_run=None, recent_runs=None, on_token=None:
         ConversationReply(action="answer" if message.endswith("？") else "update_spec", reply="已理解你的消息。"))
     monkeypatch.setattr(DeepSeekProvider, "parse_spec", lambda self, request: ReactorModelSpec(user_request=request))
     monkeypatch.setattr(DeepSeekProvider, "merge_spec", lambda self, spec, request: spec.model_copy(update={"user_request": spec.user_request + "；" + request}))

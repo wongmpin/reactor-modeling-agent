@@ -34,3 +34,21 @@ def test_invalid_json_retries_once_then_fails_without_fallback(monkeypatch):
     with pytest.raises(ModelUnavailable, match="two attempts"):
         provider._json_chat(messages=[], response_format={"type": "json_object"})
     assert len(count) == 2
+
+
+def test_conversation_reply_consumes_sse_json_and_emits_incremental_text(monkeypatch):
+    provider = DeepSeekProvider(api_key="test-only")
+    sent = []
+    chunks = ['{"action":"answer","reply":"甲烷重整', '，两个工况', '\\n读取已完成的第6版', ' \\"710°C\\"。"}']
+    def stream(**kwargs):
+        sent.append(kwargs)
+        return [SimpleNamespace(choices=[SimpleNamespace(delta=SimpleNamespace(content=value))]) for value in chunks]
+    monkeypatch.setattr(provider, "_chat", stream)
+    emitted = []
+    from reactor_agent.domain.models import ReactorModelSpec
+    reply = provider.conversation_reply(ReactorModelSpec(), "compare", [], on_token=emitted.append)
+    assert reply.action == "answer"
+    assert reply.reply == '甲烷重整，两个工况\n读取已完成的第6版 "710°C"。'
+    assert ''.join(emitted) == reply.reply
+    assert sent[0]["stream"] is True
+    assert sent[0]["response_format"] == {"type": "json_object"}

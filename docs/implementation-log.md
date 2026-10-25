@@ -48,3 +48,7 @@ Git提交使用Codex <codex@localhost>标识本次自动化开发，不伪造用
 ## 清晰显示待补项与确认字段同步（2026-10-25）
 
 甲苯任务检查发现：用户已确认的邻/间/对二甲苯1:1:1分布及拆分化学计量留在 assumptions/reactions，known_parameters.selectivity 未同步，确定性校验因此重复报缺选择性。service.resolve_input 现在只在对应异构体分布假设已明确确认后，将已明确写入反应计量的各产品系数归一化写入 selectivity；没有确认的假设不会被推定。无缺参但存在校验错误时，对话逐条列出诊断，并区分已确认字段同步问题和真实缺少的异构体比例。当前用户任务第4版已整理该已确认比例并重新模型选型，ready=True；没有提交HYSYS运行。
+
+## DeepSeek SSE流式回复
+
+DeepSeek conversation请求使用OpenAI兼容SDK的`stream=True`读取SSE事件；服务端逐段提取JSON对象的reply字符串，同时缓冲并校验完整JSON/action。Streamlit通过占位容器把累积文本增量推送到聊天气泡，不用阻塞至整段回复完成。协议无效/流异常仍返回错误诊断，不将部分文本保存为完成回复。实测在线中文回复269段，首段约2.79秒，拼接流与完整校验后的回复完全一致；普通测试覆盖JSON转义、分块边界、完整性和stream请求参数。Streamlit浏览器通道本身是原生WebSocket，不宣称浏览器端连接是SSE。

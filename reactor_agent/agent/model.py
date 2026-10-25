@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from pathlib import Path
 from typing import Any
 
@@ -54,6 +55,45 @@ class DeepSeekProvider:
             except (ValueError, TypeError):
                 if attempt == 1:
                     raise ModelUnavailable("DeepSeek returned invalid/empty JSON after two attempts.")
+
+    @staticmethod
+    def _streamed_json_string(content: str, field: str, emitted: int) -> tuple[str, int]:
+        """Decode the complete prefix of one JSON string field as it arrives over SSE."""
+        match = re.search(r'"' + re.escape(field) + r'"\s*:\s*"', content)
+        if not match:
+            return "", emitted
+        output: list[str] = []
+        index = match.end()
+        decoded_count = 0
+        escapes = {"\"": '"', "\\": "\\", "/": "/", "b": "\b", "f": "\f",
+                   "n": "\n", "r": "\r", "t": "\t"}
+        while index < len(content):
+            char = content[index]
+            if char == '"':
+                break
+            if char == "\\":
+                if index + 1 >= len(content):
+                    break
+                escaped = content[index + 1]
+                if escaped == "u":
+                    code = content[index + 2:index + 6]
+                    if len(code) < 4 or not re.fullmatch(r"[0-9a-fA-F]{4}", code):
+                        break
+                    value = chr(int(code, 16))
+                    index += 6
+                elif escaped in escapes:
+                    value = escapes[escaped]
+                    index += 2
+                else:
+                    break
+                output.append(value)
+                decoded_count += 1
+                continue
+            output.append(char)
+            decoded_count += 1
+            index += 1
+        decoded = "".join(output)
+        return decoded[emitted:], decoded_count
 
     def parse_spec(self, request: str) -> ReactorModelSpec:
         schema = json.dumps(ReactorModelSpec.model_json_schema(), ensure_ascii=False)
@@ -147,10 +187,9 @@ class DeepSeekProvider:
             raise ModelUnavailable(f"Invalid reactor selection response: {exc}") from exc
 
     def conversation_reply(self, spec: ReactorModelSpec, message: str, history: list[dict], latest_run: dict | None = None,
-                           recent_runs: list[dict] | None = None):
+                           recent_runs: list[dict] | None = None, on_token=None):
         from reactor_agent.domain.tools import ConversationReply
-        data = self._json_chat(
-            messages=[
+        messages = [
                 {"role": "system", "content": (
                     "你是化工反应器建模对话助手。用户用中文时请自然地用中文交流。"
                     "所有面向用户的回复一律使用简体中文；仅保留无法翻译的化学式、组分名称、标准缩写/专名和单位。严禁输出selectivity_distribution、thermal_mode、specified_temperature、phase等内部键或枚举值；改用中文术语。"
@@ -182,8 +221,27 @@ class DeepSeekProvider:
                     "recent_real_runs": recent_runs or [],
                     "message": message,
                 }, ensure_ascii=False)},
-            ], response_format={"type": "json_object"},
-        )
+            ]
+        content = ""
+        emitted = 0
+        try:
+            stream = self._chat(messages=messages, response_format={"type": "json_object"}, stream=True)
+            for chunk in stream:
+                delta = chunk.choices[0].delta.content or ""
+                if not delta:
+                    continue
+                content += delta
+                if on_token:
+                    text, emitted = self._streamed_json_string(content, "reply", emitted)
+                    if text:
+                        on_token(text)
+            data = json.loads(content)
+            if not isinstance(data, dict):
+                raise ValueError("Expected a JSON object")
+        except Exception as exc:
+            if isinstance(exc, ModelUnavailable):
+                raise
+            raise ModelUnavailable(f"DeepSeek streaming response failed ({type(exc).__name__}).") from exc
         try:
             return ConversationReply.model_validate(data)
         except Exception as exc:

@@ -10,10 +10,13 @@ from reactor_agent.service import ReactorAgentService
 class Provider:
     action = "update_spec"
     fail = False
-    def conversation_reply(self, spec, message, history, latest_run=None, recent_runs=None):
+    def conversation_reply(self, spec, message, history, latest_run=None, recent_runs=None, on_token=None):
         if self.fail:
             raise RuntimeError("Model temporarily unavailable")
-        return ConversationReply(action=self.action, reply="已收到。")
+        reply = "已收到。"
+        if on_token:
+            on_token(reply)
+        return ConversationReply(action=self.action, reply=reply)
     def parse_spec(self, request):
         spec = ReactorModelSpec.model_validate_json((Path(__file__).parents[1] / "examples/hydrogenation.json").read_text(encoding="utf-8"))
         spec.user_request = request
@@ -101,7 +104,7 @@ def test_chat_passes_actual_multi_version_runs_to_model(chat, monkeypatch):
         result = SimulationResult(task_id=task_id, spec_version=version)
         chat.database.save_run(result.run_id, task_id, version, 'failed', result.model_dump(mode='json'))
     received = []
-    def reply(spec, message, history, latest_run=None, recent_runs=None):
+    def reply(spec, message, history, latest_run=None, recent_runs=None, on_token=None):
         received.extend(recent_runs)
         return ConversationReply(action='answer', reply='These runs failed engineering checks.')
     monkeypatch.setattr(chat.service.provider, 'conversation_reply', reply)
