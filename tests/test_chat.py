@@ -108,3 +108,19 @@ def test_chat_passes_actual_multi_version_runs_to_model(chat, monkeypatch):
     chat.send(task_id, 'Compare both versions; do not run.')
     assert {row['result']['spec_version'] for row in received} == {1, 2}
     assert all(row['status'] == 'failed' for row in received)
+    assert {row['spec']['version'] for row in received} == {1, 2}
+
+
+def test_explicit_unrelated_scenario_splits_task_and_only_reuses_its_own_request(chat):
+    old_task = chat.send(None, '甲烷蒸汽重整，进料520°C，13.5bar。')
+    chat.send(old_task, '甲苯歧化，甲苯10000kg/h，380°C，2.5MPa，转化率50%。')
+    new_task = chat.send(old_task, '这是新的测试场景，和之前的测试场景无关。')
+
+    assert new_task != old_task
+    assert chat.database.get_spec(old_task).user_request.startswith('甲烷')
+    new_spec = chat.database.get_spec(new_task)
+    assert '甲苯' in new_spec.user_request
+    assert '甲烷' not in new_spec.user_request
+    assert len(chat.database.list_runs(new_task)) == 0
+    assert [message['role'] for message in chat.database.chat_messages(new_task)] == ['user', 'assistant']
+    assert any(event['event_type'] == 'independent_task_created' for event in chat.database.audit_events(new_task))

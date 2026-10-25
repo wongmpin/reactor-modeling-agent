@@ -1,6 +1,7 @@
 """Conversation application service. Chat is persisted separately from simulation specifications."""
 from __future__ import annotations
 
+import re
 from typing import Any
 from reactor_agent.agent.model import DeepSeekProvider
 from reactor_agent.domain.models import ReactorModelSpec
@@ -12,6 +13,13 @@ ASSUMPTION_NAMES = {"annual_methane_throughput": "甲烷年处理量", "methane_
                     "annual_operating_hours": "年运行小时数", "feed_pressure": "进料压力",
                     "pressure_drop": "压降", "no_pressure_drop": "无压降", "thermodynamic_data_source": "热力学数据来源",
                     "no_solid_phase": "不考虑固相"}
+INDEPENDENT_SCENARIO = re.compile(
+    r"(?:新(?:的)?(?:测试)?(?:场景|任务)|另一个(?:测试)?场景).{0,30}(?:无关|独立|不要沿用|不继承|别带入|不带入)|"
+    r"(?:无关|独立|不要沿用|不继承|别带入|不带入).{0,30}(?:新(?:的)?(?:测试)?(?:场景|任务)|之前的场景)", re.I)
+
+
+def is_independent_scenario_message(text: str) -> bool:
+    return bool(INDEPENDENT_SCENARIO.search(text))
 
 
 class ChatApplication:
@@ -59,6 +67,17 @@ class ChatApplication:
         text = text.strip()
         if not text:
             raise ValueError("请输入消息。")
+        independent_task = False
+        if task_id and is_independent_scenario_message(text):
+            prior_messages = self.database.chat_messages(task_id)
+            prior_request = next((message["content"] for message in reversed(prior_messages)
+                                  if message["role"] == "user" and
+                                  not is_independent_scenario_message(message["content"])), None)
+            if prior_request:
+                task_id = self.service.create_task(prior_request).task_id
+                text = prior_request
+                independent_task = True
+                self.database.audit(task_id, "independent_task_created", "Created a clean task from the immediately preceding user scenario request.")
         if task_id is None:
             task_id = self.service.create_task(text).task_id
         history = self.database.chat_messages(task_id)
@@ -67,14 +86,17 @@ class ChatApplication:
             spec = self.database.get_spec(task_id)
             runs = self.database.list_runs(task_id)
             provider = self.service.provider or DeepSeekProvider()
-            decision = provider.conversation_reply(spec, text, history,
+            decision = (None if independent_task else provider.conversation_reply(spec, text, history,
                                                    runs[0]["payload"] if runs else None,
-                                                   recent_runs=[{"status": row["status"], "result": row["payload"]}
-                                                                for row in runs[:6]])
-            self.database.audit(task_id, "conversation_action", decision.action)
-            if decision.action == "answer":
+                                                   recent_runs=[{"status": row["status"],
+                                                                 "spec": self.database.get_spec(task_id, row["spec_version"]).model_dump(mode="json"),
+                                                                 "result": row["payload"]}
+                                                                for row in runs[:6]]))
+            if decision is not None:
+                self.database.audit(task_id, "conversation_action", decision.action)
+            if decision is not None and decision.action == "answer":
                 self.database.add_chat_message(task_id, "assistant", decision.reply, {"kind": "answer"})
-            elif decision.action == "run":
+            elif decision is not None and decision.action == "run":
                 self._queue(task_id, decision.reply)
             else:
                 if spec.version == 1 and spec.feed is None:
@@ -84,9 +106,10 @@ class ChatApplication:
                 if output.get("status") == "model_unavailable":
                     raise RuntimeError("模型暂时无法完成规格解析，请稍后重试。")
                 spec = self.database.get_spec(task_id)
-                self.database.add_chat_message(task_id, "assistant", self.task_reply(task_id, decision.reply),
+                prefix = "已根据你刚才描述的新场景创建独立任务，只使用该场景的信息；旧任务的规格和运行结果未带入。" if independent_task else decision.reply
+                self.database.add_chat_message(task_id, "assistant", self.task_reply(task_id, prefix),
                     {"kind": "spec_update", "spec_version": spec.version})
-                if decision.action == "update_and_run" and self.service.execution_readiness(task_id)["ready"]:
+                if decision is not None and decision.action == "update_and_run" and self.service.execution_readiness(task_id)["ready"]:
                     self._queue(task_id)
         except Exception as exc:
             self._record_error(task_id, exc)
