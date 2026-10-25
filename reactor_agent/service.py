@@ -8,7 +8,7 @@ from typing import Any
 from uuid import uuid4
 
 from reactor_agent.agent.graph import build_workflow, invoke_workflow
-from reactor_agent.domain.models import ReactorModelSpec, SimulationResult
+from reactor_agent.domain.models import ReactorModelSpec, SimulationResult, ReactionTerm
 from reactor_agent.domain.validation import validate_reactor_choice, validate_spec, validate_backend_spec, validate_engineering
 from reactor_agent.storage.db import Database
 from reactor_agent.harness import Harness
@@ -33,6 +33,42 @@ class ReactorAgentService:
         self.database.save_spec(revised)
         return revised
 
+    @staticmethod
+    def _apply_confirmed_xylene_distribution(spec: ReactorModelSpec) -> ReactorModelSpec:
+        """Expand a lumped xylene product only when the user confirmed an equal split."""
+        confirmed_equal_split = any(
+            assumption.confirmed_by_user
+            and "二甲苯" in assumption.key
+            and any(marker in assumption.value for marker in ("等摩尔", "1:1:1", "各占1/3"))
+            for assumption in spec.assumptions
+        )
+        if not confirmed_equal_split:
+            return spec
+
+        isomers = (("邻二甲苯", "C8H10"), ("间二甲苯", "C8H10"), ("对二甲苯", "C8H10"))
+        changed = False
+        for reaction in spec.reactions:
+            products: list[ReactionTerm] = []
+            xylene_total = 0.0
+            for product in reaction.products:
+                if product.component.strip().casefold() == "二甲苯" and product.formula == "C8H10":
+                    xylene_total += product.coefficient
+                    changed = True
+                elif product.formula == "C8H10" and product.component in {name for name, _ in isomers}:
+                    xylene_total += product.coefficient
+                else:
+                    products.append(product)
+            if xylene_total:
+                products.extend(ReactionTerm(component=name, formula=formula,
+                                             coefficient=xylene_total / 3)
+                                for name, formula in isomers)
+                changed = True
+            reaction.products = products
+        if not changed:
+            return spec
+        spec.known_parameters.selectivity.update({name: 1 / 3 for name, _ in isomers})
+        return spec
+
     def process_request(self, task_id: str, request: str = "", spec_json: str = "") -> dict[str, Any]:
         if not spec_json:
             current = self.database.get_spec(task_id)
@@ -47,6 +83,7 @@ class ReactorAgentService:
             conn.close()
         if output.get("spec"):
             spec = ReactorModelSpec.model_validate(output["spec"])
+            spec = self._apply_confirmed_xylene_distribution(spec)
             try:
                 prior = self.database.get_spec(task_id)
                 spec = spec.model_copy(update={

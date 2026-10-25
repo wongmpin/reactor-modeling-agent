@@ -3,6 +3,7 @@ import json
 import pytest
 
 from reactor_agent.domain.models import (
+    Assumption,
     BackendCapabilities,
     ComponentFraction,
     FeedStream,
@@ -118,3 +119,32 @@ def test_preflight_never_confirms_or_connects_backend_and_explicit_confirmations
     assert any(e["event_type"] == "user_assumptions_confirmed" for e in database.audit_events(spec.task_id))
     with pytest.raises(ValueError, match="Unknown assumption"):
         service.resolve_input(spec.task_id, "", ["invented_key"])
+
+
+def test_confirmed_equal_xylene_distribution_expands_lumped_product_only_when_confirmed():
+    from reactor_agent.domain.validation import validate_spec
+    spec = ReactorModelSpec(
+        feed=FeedStream(components=[ComponentFraction(name="甲苯", formula="C7H8", value=1)],
+            flow=10000, flow_unit="kg/h", flow_basis="mass", temperature=380, pressure=25),
+        reactions=[ReactionSpec(reactants=[ReactionTerm(component="甲苯", formula="C7H8", coefficient=2)],
+            products=[ReactionTerm(component="苯", formula="C6H6", coefficient=1),
+                      ReactionTerm(component="二甲苯", formula="C8H10", coefficient=1)],
+            phase="vapor", basis_component="甲苯", conversion=.5)],
+        reactor_type=ReactorType.CONVERSION,
+        known_parameters={"thermal_mode":"specified_temperature", "conversion":.5,
+                          "target_outlet_temperature":380, "target_pressure":25},
+        assumptions=[Assumption(key="二甲苯异构体分布", value="邻、间、对二甲苯等摩尔分配",
+                                rationale="用户明确确认", confirmed_by_user=True)])
+    unconfirmed = spec.model_copy(deep=True)
+    normalized = ReactorAgentService._apply_confirmed_xylene_distribution(spec)
+    products = normalized.reactions[0].products
+    assert [(p.component, p.coefficient) for p in products[1:]] == [
+        ("邻二甲苯", pytest.approx(1/3)), ("间二甲苯", pytest.approx(1/3)),
+        ("对二甲苯", pytest.approx(1/3))]
+    assert normalized.known_parameters.selectivity == {
+        "邻二甲苯": pytest.approx(1/3), "间二甲苯": pytest.approx(1/3), "对二甲苯": pytest.approx(1/3)}
+    assert validate_spec(normalized).passed
+
+    unconfirmed.assumptions[0].confirmed_by_user = False
+    unchanged = ReactorAgentService._apply_confirmed_xylene_distribution(unconfirmed)
+    assert unchanged.reactions[0].products[-1].component == "二甲苯"

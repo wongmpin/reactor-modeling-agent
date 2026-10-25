@@ -102,3 +102,12 @@ def test_component_throughput_constraint_detects_branch_vs_total_flow_error():
     assert any("Component feed" in e for e in validate_engineering(spec, actual).errors)
     spec.feed.flow = None
     assert validate_spec(spec).passed
+
+
+def test_hysys_component_aliases_cover_chinese_aromatics_and_reject_lumped_xylene():
+    from reactor_agent.hysys.adapter import HysysComAdapter, HysysAdapterError
+    aliases = {"甲苯":"Toluene", "苯":"Benzene", "邻二甲苯":"o-Xylene",
+               "间二甲苯":"m-Xylene", "对二甲苯":"p-Xylene"}
+    assert {name:HysysComAdapter._component_id(name) for name in aliases} == aliases
+    with pytest.raises(HysysAdapterError, match="异构体总称"):
+        HysysComAdapter._component_id("二甲苯")

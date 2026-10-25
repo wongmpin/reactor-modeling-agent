@@ -38,3 +38,7 @@ DeepSeek 的规格解析、合并、选型依据和对话回复均明确要求�
 ## SSE流式对话（2026-10-25）
 
 对话模型改用OpenAI兼容SDK流式读取DeepSeek SSE JSON输出，增量解码reply字段并在Streamlit聊天中持续更新；完成后再整体解析和验证action。实机API得到269段中文回复分块，首块约2.79秒；流拼接内容与最终模型协议内容完全一致。普通测试59项通过，HYSYS实机8项按默认设置跳过。浏览器侧Streamlit仍使用原生WebSocket，而模型连接采用SSE。
+
+## 中文组分名HYSYS实机复验
+
+新增中文芳烃别名与明确选择性拆分测试。实机临时案例中“甲苯/苯/邻间对二甲苯”成功映射为Toluene/Benzene/o-Xylene/m-Xylene/p-Xylene，HYSYS求解收敛且工程校验通过。对照任务重整为v5并通过readiness，不自动运行用户任务。

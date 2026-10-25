@@ -116,3 +116,39 @@ def test_hysys_derives_total_feed_from_component_throughput(tmp_path):
         assert incoming.molar_flow_kmol_h > 2800
     finally:
         worker.stop()
+
+
+def test_hysys_resolves_chinese_toluene_and_confirmed_xylene_isomers(tmp_path):
+    from pathlib import Path
+    from reactor_agent.domain.models import (Assumption, ReactionTerm, ReactorModelSpec, ReactorType)
+    from reactor_agent.service import ReactorAgentService
+    from reactor_agent.domain.validation import validate_engineering, validate_spec
+
+    spec = ReactorModelSpec.model_validate_json((Path(__file__).parents[2] / "examples" / "toluene-test-data.json").read_text(encoding="utf-8"))
+    spec.reactor_type = ReactorType.CONVERSION
+    spec.reactor_rationale = "Adapter integration test for explicitly confirmed Chinese component names."
+    spec.feed.components[0].name = "甲苯"
+    spec.reactions[0].reactants[0].component = "甲苯"
+    spec.reactions[0].basis_component = "甲苯"
+    spec.reactions[0].products = [
+        ReactionTerm(component="苯", formula="C6H6", coefficient=1),
+        ReactionTerm(component="二甲苯", formula="C8H10", coefficient=1),
+    ]
+    spec.known_parameters.selectivity = {}
+    spec.assumptions = [Assumption(key="二甲苯异构体分布", value="邻、间、对二甲苯等摩尔分配",
+        rationale="Explicitly confirmed integration-test assumption.", confirmed_by_user=True)]
+    spec = ReactorAgentService._apply_confirmed_xylene_distribution(spec)
+    assert validate_spec(spec).passed
+
+    worker = HysysWorker(timeout_seconds=90)
+    try:
+        result = worker.run_model(spec, tmp_path / "chinese-toluene.hsc")
+        assert result.case_created and result.solver_converged, result.diagnostics
+        assert validate_engineering(spec, result).passed
+        product = next(stream for stream in result.streams if stream.name == "Vapour Product")
+        assert set(product.mole_fractions) == {"甲苯", "苯", "邻二甲苯", "间二甲苯", "对二甲苯"}
+        assert result.raw_summary["component_mapping"] == {
+            "甲苯": "Toluene", "苯": "Benzene", "邻二甲苯": "o-Xylene",
+            "间二甲苯": "m-Xylene", "对二甲苯": "p-Xylene"}
+    finally:
+        worker.stop()

@@ -133,10 +133,19 @@ class HysysComAdapter:
     @staticmethod
     def _component_id(name: str) -> str:
         # Chemical aliases only: never scenario names or reactor selection rules.
-        aliases = {"water": "H2O", "steam": "H2O", "carbon monoxide": "CO",
+        aliases = {"water": "H2O", "steam": "H2O", "水": "H2O", "carbon monoxide": "CO",
                    "carbon dioxide": "CO2", "h2": "Hydrogen", "ch4": "Methane",
-                   "o-xylene": "o-Xylene", "m-xylene": "m-Xylene", "p-xylene": "p-Xylene"}
-        return aliases.get(name.casefold(), name)
+                   "甲烷": "Methane", "氢气": "Hydrogen", "氢": "Hydrogen",
+                   "一氧化碳": "CO", "二氧化碳": "CO2",
+                   "toluene": "Toluene", "甲苯": "Toluene",
+                   "benzene": "Benzene", "苯": "Benzene",
+                   "o-xylene": "o-Xylene", "邻二甲苯": "o-Xylene", "邻二甲苯（o-xylene）": "o-Xylene",
+                   "m-xylene": "m-Xylene", "间二甲苯": "m-Xylene", "间二甲苯（m-xylene）": "m-Xylene",
+                   "p-xylene": "p-Xylene", "对二甲苯": "p-Xylene", "对二甲苯（p-xylene）": "p-Xylene"}
+        if name.strip().casefold() in {"二甲苯", "xylenes", "xylene isomers"}:
+            raise HysysAdapterError("ambiguous_component",
+                "“二甲苯”是异构体总称，HYSYS需要邻二甲苯、间二甲苯、对二甲苯具体组分；请先确认选择性分布。")
+        return aliases.get(name.strip().casefold(), name)
 
     def run_model(self, spec: ReactorModelSpec, destination: str) -> SimulationResult:
         from reactor_agent.domain.validation import validate_spec, validate_reactor_choice, validate_backend_spec
