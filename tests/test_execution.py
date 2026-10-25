@@ -89,3 +89,16 @@ def test_assumption_and_parameter_changes_need_new_model_authorization(database,
     assert Harness().authorize_execution(saved, database.audit_events(task.task_id)).passed
     service.revise_spec(task.task_id, {"known_parameters": {**saved.known_parameters.model_dump(), "conversion": .2}})
     assert not Harness().authorize_execution(database.get_spec(task.task_id), database.audit_events(task.task_id)).passed
+
+
+def test_component_throughput_constraint_detects_branch_vs_total_flow_error():
+    from reactor_agent.domain.validation import validate_spec
+    spec = example()
+    spec.feed.component_mass_flows_kg_h = {"Ethylene": 1400.0}
+    actual = result(spec)
+    actual.raw_summary["hysys_molecular_weights_kg_kmol"] = {"Ethylene": 28.0}
+    assert validate_engineering(spec, actual).passed
+    spec.feed.component_mass_flows_kg_h["Ethylene"] = 2800.0
+    assert any("Component feed" in e for e in validate_engineering(spec, actual).errors)
+    spec.feed.flow = None
+    assert validate_spec(spec).passed

@@ -27,3 +27,6 @@ version: 1.0.0
 
 - Gibbs inputs may provide allowed_species (name + formula) with no reactions. Do not demand reaction equations when the species universe and thermodynamic source are already complete and confirmed.
 - Multiple conversion reactions are outside the verified adapter capability. Diagnose rather than silently choosing reaction order or extending single-reaction conversion semantics.
+
+- If a user's confirmed throughput refers to one component, preserve that branch rate in feed.component_mass_flows_kg_h. Set feed.flow=null when total mixed flow should be derived from the component constraint and composition by HYSYS molecular weights. Never put a component's molar flow into the total mixed-feed flow field. Example principle: annual component mass / operating hours constrains that component's hourly mass rate, not the total mixture.
+- Use Chinese clarification questions for Chinese requests. Once the user confirms an assumption, populate the corresponding numeric fields and remove resolved missing_information; keep unresolved questions blocking. A specified outlet temperature is an imposed outlet-temperature boundary, not proof that inlet and outlet are at the same temperature.

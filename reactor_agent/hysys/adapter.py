@@ -177,9 +177,11 @@ class HysysComAdapter:
             declared_formulas.update({item.name: item.formula for item in spec.allowed_species})
             declared_formulas.update({term.component: term.formula for reaction in spec.reactions for term in [*reaction.reactants, *reaction.products]})
             actual_formulas = {}
+            molecular_weights = {}
             for name, component_id in ids.items():
                 actual = str(fp.Components.Item(component_id).Formula).strip()
                 actual_formulas[name] = actual
+                molecular_weights[name] = float(fp.Components.Item(component_id).MolecularWeightValue)
                 if parse_formula(actual) != parse_formula(declared_formulas[name]):
                     raise HysysAdapterError("component_formula_mismatch", f"HYSYS formula for {name} is {actual}; declared {declared_formulas[name]}.")
             reaction_set = None
@@ -217,10 +219,24 @@ class HysysComAdapter:
             feed.Temperature.SetValue(convert_temperature(spec.feed.temperature, spec.feed.temperature_unit), "K")
             inlet_pressure = convert_pressure(spec.feed.pressure, spec.feed.pressure_unit)
             feed.Pressure.SetValue(inlet_pressure, "kPa")
-            if spec.feed.flow_basis == "mass":
-                feed.MassFlow.SetValue(convert_mass_flow(spec.feed.flow, spec.feed.flow_unit), "kg/h")
+            if spec.feed.flow is not None:
+                if spec.feed.flow_basis == "mass":
+                    feed.MassFlow.SetValue(convert_mass_flow(spec.feed.flow, spec.feed.flow_unit), "kg/h")
+                else:
+                    feed.MolarFlow.SetValue(convert_flow(spec.feed.flow, spec.feed.flow_unit), "kgmole/h")
             else:
-                feed.MolarFlow.SetValue(convert_flow(spec.feed.flow, spec.feed.flow_unit), "kgmole/h")
+                derived_totals = []
+                composition = {item.name: item.value for item in spec.feed.components}
+                for name, mass_rate in spec.feed.component_mass_flows_kg_h.items():
+                    if spec.feed.composition_basis == "mole_fraction":
+                        derived_totals.append(mass_rate / molecular_weights[name] / composition[name])
+                    else:
+                        derived_totals.append(mass_rate / composition[name])
+                if any(abs(value - derived_totals[0]) > max(abs(value), 1) * 1e-5 for value in derived_totals):
+                    raise HysysAdapterError("inconsistent_component_flows", "Component flow constraints disagree with feed composition.")
+                variable, unit = ((feed.MolarFlow, "kgmole/h") if spec.feed.composition_basis == "mole_fraction"
+                                  else (feed.MassFlow, "kg/h"))
+                variable.SetValue(derived_totals[0], unit)
             stage = "configure_reactor"
             op_type = {ReactorType.CONVERSION: "ConversionReactorOp", ReactorType.GIBBS: "GibbsReactorOp"}[spec.reactor_type]
             op = fs.Operations.Add("Agent Reactor", op_type)
@@ -266,7 +282,7 @@ class HysysComAdapter:
             run.raw_summary = {"operation_type": str(op.TypeName), "calc_level": int(op.CalcLevel),
                 "is_solving": bool(case.Solver.IsSolving), "outputs_known": known_outputs,
                 "variables_inconsistent": inconsistent, "property_package": str(fp.PropertyPackageName),
-                "component_mapping": ids, "hysys_component_formulas": actual_formulas, "feed_mass_flow_kg_h": float(feed.MassFlow.GetValue("kg/h")), "duty_kw": float(energy.HeatFlow.GetValue("kW")) if energy.HeatFlow.IsKnown else None,
+                "component_mapping": ids, "hysys_component_formulas": actual_formulas, "hysys_molecular_weights_kg_kmol": molecular_weights, "feed_mass_flow_kg_h": float(feed.MassFlow.GetValue("kg/h")), "duty_kw": float(energy.HeatFlow.GetValue("kW")) if energy.HeatFlow.IsKnown else None,
                 "thermodynamic_data_source": spec.thermo.thermodynamic_data_source}
             if spec.reactor_type == ReactorType.CONVERSION:
                 run.raw_summary["hysys_conversion_percent"] = list(op.RxnPercentConversionValue)

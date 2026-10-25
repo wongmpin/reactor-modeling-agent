@@ -15,6 +15,9 @@ st.title("化工反应器建模 Agent")
 st.caption("本地工作台 · Aspen HYSYS V15")
 
 service = ReactorAgentService()
+tasks = service.database.list_tasks()[:10]
+if tasks and st.session_state.get("selected_task") not in {task["task_id"] for task in tasks}:
+    st.session_state["selected_task"] = tasks[0]["task_id"]
 left, right = st.columns([3, 2])
 
 with left:
@@ -33,21 +36,35 @@ with left:
                 output = service.process_request(task.task_id, request=request, spec_json=spec_json)
             st.session_state["last_output"] = output
             st.session_state["last_task_id"] = task.task_id
+            st.session_state["selected_task"] = task.task_id
         except Exception as exc:
             st.error(str(exc))
 
     output = st.session_state.get("last_output")
+    active_id = st.session_state.get("selected_task")
+    if active_id:
+        persisted_spec = service.database.get_spec(active_id)
+        readiness = service.execution_readiness(active_id)
+        task_status = next(task["status"] for task in tasks if task["task_id"] == active_id)
+        output = {"spec": persisted_spec.model_dump(mode="json"), "status": task_status,
+                  "diagnostics": readiness["errors"] if not readiness["ready"] else []}
     if output:
         st.subheader("工作流状态")
         st.write(output.get("status", "unknown"))
-        for message in output.get("diagnostics", []):
-            st.warning(message)
+        if output.get("diagnostics"):
+            st.info("此任务还有待补充或确认的条件，请在右侧继续任务区处理。")
+            with st.expander("详细校验诊断"):
+                for message in output["diagnostics"]:
+                    st.write(message)
         if output.get("spec"):
             for missing in output["spec"].get("missing_information", []):
                 st.warning(missing["question"])
             for assumption in output["spec"].get("assumptions", []):
                 st.write(f"假设：{assumption['key']} = {assumption['value']} · {'已确认' if assumption['confirmed_by_user'] else '待确认'}")
-            st.json(output["spec"])
+            st.write("模型选择的反应器", output["spec"].get("reactor_type"))
+            st.write(output["spec"].get("reactor_rationale") or "尚未判断")
+            with st.expander("当前结构化规格"):
+                st.json(output["spec"])
             if output.get("status") == "spec_validated":
                 st.success("规格通过前置校验。提交前还会检查后端能力与运行边界。")
 
@@ -67,6 +84,7 @@ with right:
         selected_id = st.selectbox(
             "选择已有任务",
             options=[task["task_id"] for task in tasks],
+            key="selected_task",
             format_func=lambda task_id: next(
                 f"{item['status']} · {item['user_request'][:32] or task_id[:8]}"
                 for item in tasks if item["task_id"] == task_id
@@ -79,7 +97,31 @@ with right:
             height=260,
             key=f"resume_spec_{selected_id}_v{current_spec.version}",
         )
-        clarification = st.text_input("补充条件或修改说明", key=f"resume_text_{selected_id}")
+        readiness = service.execution_readiness(selected_id)
+        if not readiness["ready"]:
+            st.info("当前任务等待补充条件或确认假设。完成下方内容并重新校验后才能提交 HYSYS。")
+            for missing in readiness["questions"]:
+                st.write("• " + missing["question"])
+        confirmed_keys = []
+        if readiness["unconfirmed_assumptions"]:
+            st.markdown("**逐项确认建模假设**")
+            for assumption in readiness["unconfirmed_assumptions"]:
+                if st.checkbox(f"确认 {assumption['key']}：{assumption['value']}",
+                               value=False, key=f"confirm_{selected_id}_v{current_spec.version}_{assumption['key']}",
+                               help=f"{assumption['rationale']}\n{assumption.get('impact') or ''}"):
+                    confirmed_keys.append(assumption["key"])
+        clarification = st.text_area("补充条件或修改说明", key=f"resume_text_{selected_id}", height=140,
+                                    placeholder="可直接回答上方问题，例如年处理量、年运行小时、进料压力、温度边界、物性和物种范围。")
+        if st.button("确认所选假设并补参校验", key="confirm_inputs", use_container_width=True,
+                     disabled=not confirmed_keys):
+            try:
+                with st.spinner("正在落实已确认条件并重新校验…"):
+                    output = service.resolve_input(selected_id, clarification, confirmed_keys, resume_json)
+                st.session_state["last_output"] = output
+                st.session_state["last_task_id"] = selected_id
+                st.rerun()
+            except Exception as exc:
+                st.error(str(exc))
         if st.button("保存新版本并重新校验", key="resume_task", use_container_width=True):
             try:
                 output = service.process_request(selected_id, request=clarification, spec_json=resume_json)
@@ -90,7 +132,12 @@ with right:
                 st.error(str(exc))
 
     if tasks:
-        if st.button("提交当前任务到真实 HYSYS 队列", use_container_width=True):
+        if not readiness["ready"]:
+            with st.expander("尚未满足的校验项（详细诊断）"):
+                for error in readiness["errors"]:
+                    st.write(error)
+        if st.button("提交当前任务到真实 HYSYS 队列", use_container_width=True,
+                     key="submit_hysys", disabled=not readiness["ready"]):
             try:
                 queue_id = service.queue_execution(selected_id)
                 st.success(f"已入队 {queue_id}，后台 Worker 将串行执行。点击刷新查看结果。")
@@ -100,7 +147,20 @@ with right:
             st.rerun()
         st.subheader("真实运行记录")
         from pathlib import Path
-        for row in service.database.list_runs(selected_id):
+        runs = service.database.list_runs(selected_id)
+        comparison = []
+        for row in runs:
+            result = row["payload"]
+            if result.get("engineering_validation_passed"):
+                product = next((stream for stream in result.get("streams", [])
+                                if stream["name"] == "Vapour Product"), None)
+                if product:
+                    comparison.append({"规格版本": row["spec_version"], "温度 °C": product["temperature_k"] - 273.15,
+                                       "流量 kmol/h": product["molar_flow_kmol_h"], **product["mole_fractions"]})
+        if len(comparison) > 1:
+            st.caption("同任务各版本气相出口对比（湿基摩尔分数；仅显示工程校验通过的运行）")
+            st.dataframe(comparison, use_container_width=True)
+        for row in runs:
             result = row["payload"]
             with st.expander(f"{row['status']} · v{row['spec_version']} · {row['run_id'][:8]}", expanded=True):
                 st.write({"案例已保存": result["case_created"], "求解已收敛": result["solver_converged"],

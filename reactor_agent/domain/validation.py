@@ -81,8 +81,12 @@ def validate_spec(spec: ReactorModelSpec) -> ValidationReport:
                 parse_formula(component.formula)
             except ValueError as exc:
                 report.errors.append(f"Feed component {component.name}: {exc}")
+        for name in spec.feed.component_mass_flows_kg_h:
+            if not any(item.name == name and item.value > 0 for item in spec.feed.components):
+                report.errors.append(f"Component flow constraint {name} requires a positive feed composition entry.")
         if spec.feed.flow is None:
-            report.errors.append("Feed flow rate is required.")
+            if not spec.feed.component_mass_flows_kg_h:
+                report.errors.append("Feed flow rate is required.")
         else:
             try:
                 flow = (convert_flow(spec.feed.flow, spec.feed.flow_unit)
@@ -342,6 +346,13 @@ def validate_engineering(spec: ReactorModelSpec, result: SimulationResult) -> Va
             actual, expected = result.raw_summary.get("feed_mass_flow_kg_h"), convert_mass_flow(spec.feed.flow, spec.feed.flow_unit)
         if actual is None or abs(actual - expected) > max(abs(expected) * 1e-6, 1e-8):
             report.errors.append("HYSYS feed flow does not match the specification.")
+    if spec.feed:
+        weights = result.raw_summary.get("hysys_molecular_weights_kg_kmol", {})
+        for name, expected in spec.feed.component_mass_flows_kg_h.items():
+            weight = weights.get(name)
+            actual = ((feed.molar_flow_kmol_h or 0) * feed.mole_fractions.get(name, 0) * weight) if weight else None
+            if actual is None or abs(actual - expected) > max(expected * 1e-5, 1e-6):
+                report.errors.append(f"Component feed {name} does not match the confirmed mass-flow constraint {expected} kg/h (actual {actual}).")
     for stream in products:
         if not stream.molar_flow_kmol_h or stream.molar_flow_kmol_h < 1e-10:
             continue

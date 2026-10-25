@@ -94,3 +94,25 @@ def test_gibbs_accepts_species_universe_without_reaction_equations(tmp_path):
         assert validate_engineering(spec, result).passed
     finally:
         worker.stop()
+
+
+def test_hysys_derives_total_feed_from_component_throughput(tmp_path):
+    from pathlib import Path
+    from reactor_agent.domain.models import ReactorModelSpec, ReactorType
+    from reactor_agent.domain.validation import validate_engineering
+    spec = ReactorModelSpec.model_validate_json((Path(__file__).parents[2] / "examples/reforming-710-test-data.json").read_text(encoding="utf-8"))
+    spec.reactor_type = ReactorType.GIBBS
+    spec.reactor_rationale = "Adapter integration test for explicit component throughput"
+    spec.feed.flow = None
+    spec.feed.component_mass_flows_kg_h = {"Methane": 12500.0}
+    worker = HysysWorker(timeout_seconds=90)
+    try:
+        result = worker.run_model(spec, tmp_path / "component-feed.hsc")
+        assert result.solver_converged, result.diagnostics
+        assert validate_engineering(spec, result).passed
+        incoming = result.streams[0]
+        methane_mass = incoming.molar_flow_kmol_h * incoming.mole_fractions["Methane"] * result.raw_summary["hysys_molecular_weights_kg_kmol"]["Methane"]
+        assert methane_mass == pytest.approx(12500)
+        assert incoming.molar_flow_kmol_h > 2800
+    finally:
+        worker.stop()

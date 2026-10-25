@@ -73,6 +73,45 @@ class ReactorAgentService:
         report = validate_spec(spec)
         return {"passed": report.passed, "errors": report.errors, "warnings": report.warnings}
 
+    def execution_readiness(self, task_id: str) -> dict[str, Any]:
+        """Read-only preflight for UI; never connects COM or confirms assumptions."""
+        spec = self.database.get_spec(task_id)
+        errors = list(dict.fromkeys([
+            *validate_spec(spec).errors,
+            *validate_reactor_choice(spec).errors,
+            *Harness().authorize_execution(spec, self.database.audit_events(task_id)).errors,
+        ]))
+        return {"ready": not errors, "errors": errors,
+                "questions": [item.model_dump() for item in spec.missing_information if item.blocking],
+                "unconfirmed_assumptions": [item.model_dump() for item in spec.assumptions if not item.confirmed_by_user]}
+
+    def resolve_input(self, task_id: str, clarification: str, confirmed_keys: list[str],
+                      spec_json: str = "") -> dict[str, Any]:
+        current = self.database.get_spec(task_id)
+        spec = ReactorModelSpec.model_validate_json(spec_json) if spec_json else current.model_copy(deep=True)
+        if confirmed_keys and (spec.task_id != current.task_id or spec.version != current.version):
+            raise ValueError("Task version changed; reload the current assumptions before confirming.")
+        known = {item.key: item for item in spec.assumptions}
+        prior_assumptions = {item.key: item for item in current.assumptions}
+        for key in confirmed_keys:
+            if key in known and (key not in prior_assumptions or known[key].value != prior_assumptions[key].value):
+                raise ValueError("Assumption value changed in the editor; save and review it before confirming.")
+        if set(confirmed_keys) - set(known):
+            raise ValueError("Unknown assumption confirmation key.")
+        for key in confirmed_keys:
+            known[key].confirmed_by_user = True
+        confirmations = [{"key": key, "value": known[key].value} for key in confirmed_keys]
+        if confirmations:
+            self.database.audit(task_id, "user_assumptions_confirmed", json.dumps(confirmations, ensure_ascii=False))
+        request = clarification.strip()
+        if confirmations:
+            request += "\n用户已通过界面逐项明确确认以下假设和值：" + json.dumps(confirmations, ensure_ascii=False)
+        if request:
+            request += ("\n请将确认条件落实到结构化数值字段（包括由年处理量和小时数推算实际进料流量），"
+                        "复核并更新missing_information，删除已解决项；保留仍缺少的条件，勿添加未获确认的新假设。"
+                        "allowed_species应与已有组分采用相同名称，避免同一物种重复命名。")
+        return self.process_request(task_id, request=request, spec_json=spec.model_dump_json())
+
     def queue_execution(self, task_id: str) -> str:
         spec = self.database.get_spec(task_id)
         validation = validate_spec(spec)

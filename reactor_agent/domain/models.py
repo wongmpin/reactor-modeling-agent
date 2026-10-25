@@ -47,10 +47,20 @@ class FeedStream(StrictModel):
     flow: float | None = Field(default=None, gt=0)
     flow_unit: str = "kmol/h"
     flow_basis: str = "molar"
+    component_mass_flows_kg_h: dict[str, float] = Field(default_factory=dict,
+        description="Explicit component feed-rate constraints, e.g. annual throughput / operating hours; total flow may be derived from these and composition using simulator molecular weights")
     temperature: float | None = None
     temperature_unit: str = "degC"
     pressure: float | None = Field(default=None, gt=0)
     pressure_unit: str = "bar"
+
+    @field_validator("component_mass_flows_kg_h")
+    @classmethod
+    def positive_component_flows(cls, value: dict[str, float]) -> dict[str, float]:
+        import math
+        if any(not math.isfinite(flow) or flow <= 0 for flow in value.values()):
+            raise ValueError("Component mass-flow constraints must be finite and positive")
+        return value
 
     @field_validator("flow_basis")
     @classmethod

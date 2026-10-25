@@ -96,3 +96,25 @@ def test_service_checkpoint_and_clarification_preserve_task_and_versions(databas
     assert second["spec"]["version"] == 3
     assert second["spec"]["known_parameters"]["conversion"] == 0.2
     assert database.get_spec(task.task_id, 2).user_request == "carbon monoxide shift"
+
+
+def test_preflight_never_confirms_or_connects_backend_and_explicit_confirmations_are_audited(database, tmp_path):
+    from reactor_agent.domain.models import Assumption
+    class Provider:
+        def merge_spec(self, current, clarification):
+            assert current.assumptions[0].confirmed_by_user
+            assert "8000" in clarification
+            return current
+        def select_reactor(self, spec): return ReactorType.GIBBS, "Thermodynamic species model"
+    service = ReactorAgentService(database=database, data_dir=tmp_path, provider=Provider())
+    spec = ReactorModelSpec(assumptions=[Assumption(key="hours", value="8000", rationale="proposed")])
+    service.create_task("test", spec)
+    ready = service.execution_readiness(spec.task_id)
+    assert not ready["ready"]
+    assert not database.get_spec(spec.task_id).assumptions[0].confirmed_by_user
+    out = service.resolve_input(spec.task_id, "user confirms", ["hours"])
+    assert out["spec"]["assumptions"][0]["confirmed_by_user"]
+    assert database.get_spec(spec.task_id).version == 2
+    assert any(e["event_type"] == "user_assumptions_confirmed" for e in database.audit_events(spec.task_id))
+    with pytest.raises(ValueError, match="Unknown assumption"):
+        service.resolve_input(spec.task_id, "", ["invented_key"])
