@@ -1,0 +1,96 @@
+from __future__ import annotations
+
+import os
+import platform
+
+import pytest
+
+from reactor_agent.hysys.worker import HysysWorker
+
+pytestmark = pytest.mark.skipif(
+    os.getenv("RUN_HYSYS_INTEGRATION") != "1" or platform.system() != "Windows",
+    reason="Set RUN_HYSYS_INTEGRATION=1 on the HYSYS Windows workstation.",
+)
+
+
+def test_hysys_v15_sta_worker_connects_and_saves_empty_case(tmp_path):
+    worker = HysysWorker(timeout_seconds=60)
+    try:
+        capabilities = worker.inspect()
+        assert capabilities.detected
+        assert capabilities.version and "Version 15" in capabilities.version
+        assert set(capabilities.supported_reactors) == {"conversion", "gibbs"}
+
+        case_path = tmp_path / "worker-integration.hsc"
+        result = worker.create_empty_case(case_path)
+        assert result["case_created"] is True
+        assert result["model_built"] is False
+        assert case_path.is_file() and case_path.stat().st_size > 0
+    finally:
+        worker.stop()
+
+
+@pytest.mark.parametrize("filename,reactor_type", [
+    ("hydrogenation.json", "conversion"),
+    ("toluene-test-data.json", "conversion"),
+    ("reforming-710-test-data.json", "gibbs"),
+    ("reforming-600-test-data.json", "gibbs"),
+])
+def test_real_reactor_solves_validates_and_reopens(tmp_path, filename, reactor_type):
+    from pathlib import Path
+    from reactor_agent.domain.models import ReactorModelSpec, ReactorType
+    from reactor_agent.domain.validation import validate_engineering
+    spec = ReactorModelSpec.model_validate_json((Path(__file__).parents[2] / "examples" / filename).read_text(encoding="utf-8"))
+    # Adapter integration test fixes the type to isolate COM; live model selection is tested separately.
+    spec.reactor_type = ReactorType(reactor_type)
+    spec.reactor_rationale = "Adapter-only integration test with explicit, reviewed test data."
+    worker = HysysWorker(timeout_seconds=90)
+    try:
+        result = worker.run_model(spec, tmp_path / "reactor.hsc")
+        assert result.case_created, result.diagnostics
+        assert result.solver_converged, result.diagnostics
+        report = validate_engineering(spec, result)
+        assert report.passed, report.errors
+        reopen = worker.verify_saved_case(result.case_path)
+        assert reopen["reopened"] and reopen["calc_level"] == 500
+    finally:
+        worker.stop()
+
+
+def test_unknown_component_failure_never_claims_convergence(tmp_path):
+    from pathlib import Path
+    from reactor_agent.domain.models import ReactorModelSpec, ReactorType
+    spec = ReactorModelSpec.model_validate_json((Path(__file__).parents[2] / "examples/hydrogenation.json").read_text(encoding="utf-8"))
+    spec.feed.components[0].name = "NotARealHysysComponent"
+    spec.reactions[0].reactants[0].component = "NotARealHysysComponent"
+    spec.reactions[0].basis_component = "NotARealHysysComponent"
+    spec.reactor_type = ReactorType.CONVERSION
+    spec.reactor_rationale = "Deliberate integration failure"
+    worker = HysysWorker(timeout_seconds=90)
+    try:
+        result = worker.run_model(spec, tmp_path / "failed.hsc")
+        assert not result.solver_converged
+        assert not result.engineering_validation_passed
+        assert result.raw_summary["failure_stage"] == "configure_basis"
+    finally:
+        worker.stop()
+
+
+def test_gibbs_accepts_species_universe_without_reaction_equations(tmp_path):
+    from pathlib import Path
+    from reactor_agent.domain.models import ReactorModelSpec, ReactorType, ChemicalSpecies
+    from reactor_agent.domain.validation import validate_engineering
+    spec = ReactorModelSpec.model_validate_json((Path(__file__).parents[2] / "examples/reforming-710-test-data.json").read_text(encoding="utf-8"))
+    spec.allowed_species = [ChemicalSpecies(name=term.component, formula=term.formula)
+                            for name, term in {term.component: term for rxn in spec.reactions
+                            for term in [*rxn.reactants, *rxn.products]}.items()]
+    spec.reactions = []
+    spec.reactor_type = ReactorType.GIBBS
+    spec.reactor_rationale = "Unknown product distribution with explicit species and databank"
+    worker = HysysWorker(timeout_seconds=90)
+    try:
+        result = worker.run_model(spec, tmp_path / "gibbs-species.hsc")
+        assert result.solver_converged, result.diagnostics
+        assert validate_engineering(spec, result).passed
+    finally:
+        worker.stop()
