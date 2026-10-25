@@ -7,7 +7,7 @@ from pathlib import Path
 
 import streamlit as st
 from dotenv import load_dotenv
-from reactor_agent.chat import ASSUMPTION_NAMES, ChatApplication
+from reactor_agent.chat import REACTOR_NAMES, assumption_display, chemical_display, ChatApplication
 
 load_dotenv()
 st.set_page_config(page_title="化工反应器建模 Agent", page_icon="⚗️", layout="wide")
@@ -72,7 +72,7 @@ def render_run(row):
         st.warning(diagnostic)
     streams = result.get("streams", [])
     if streams:
-        st.dataframe([{"物流": stream["name"], "温度 °C": stream["temperature_k"] - 273.15 if stream.get("temperature_k") is not None else None,
+        st.dataframe([{"物流": chemical_display(stream["name"]), "温度 °C": stream["temperature_k"] - 273.15 if stream.get("temperature_k") is not None else None,
                        "压力 bar": stream["pressure_kpa"] / 100 if stream.get("pressure_kpa") is not None else None,
                        "流量 kmol/h": stream["molar_flow_kmol_h"],
                        **stream["mole_fractions"]} for stream in streams], width="stretch")
@@ -126,9 +126,10 @@ def conversation():
                 st.markdown("**请确认建模假设**\n\n仅勾选你同意的项目，然后点击确认；也可以在下方直接告诉我修改值。")
                 keys = []
                 for item in assumptions:
-                    if st.checkbox(f"{ASSUMPTION_NAMES.get(item['key'], item['key'])}：{item['value']}", value=False,
+                    label, value = assumption_display(item)
+                    if st.checkbox(f"{label}：{value}", value=False,
                                    key=f"confirm_{task_id}_v{spec.version}_{item['key']}",
-                                   help=item["rationale"] + "\n" + (item.get("impact") or "")):
+                                   help=f"依据：{item['rationale']}\n影响：{item.get('impact') or '无其他影响说明'}"):
                         keys.append(item["key"])
                 if st.button("确认所选假设", key="confirm_inputs", disabled=not keys):
                     with st.status("正在记录确认并核对条件…", expanded=True) as status:
@@ -144,7 +145,32 @@ def conversation():
         if not readiness["ready"]:
             st.caption("条件尚未齐备，请在对话中补充或确认；不会自动运行。")
         with st.expander(f"当前条件与诊断 · 第 {spec.version} 版"):
-            st.json(spec.model_dump(mode="json"))
+            st.markdown(f"**反应器**：{REACTOR_NAMES.get(spec.reactor_type.value, spec.reactor_type.value) if spec.reactor_type else '尚未选择'}")
+            if spec.reactor_rationale:
+                st.write(spec.reactor_rationale)
+            if spec.feed:
+                st.markdown("**进料**")
+                st.write(f"{chemical_display(spec.feed.name)}；温度 {spec.feed.temperature} {spec.feed.temperature_unit}；"
+                         f"压力 {spec.feed.pressure} {spec.feed.pressure_unit}；"
+                         f"流量 {spec.feed.flow} {spec.feed.flow_unit}")
+                st.write("组分：" + "、".join(f"{chemical_display(c.name)}（{c.formula}）：{c.value:g}" for c in spec.feed.components))
+            if spec.reactions:
+                st.markdown("**反应**")
+                for reaction in spec.reactions:
+                    left = " + ".join(f"{t.coefficient:g} {chemical_display(t.component)}" for t in reaction.reactants)
+                    right = " + ".join(f"{t.coefficient:g} {chemical_display(t.component)}" for t in reaction.products)
+                    reaction_name = "甲苯歧化" if (reaction.name or "").casefold() == "toluene disproportionation" else reaction.name or "反应"
+                    st.write(f"{reaction_name}：{left} → {right}")
+            st.markdown("**建模假设**")
+            for assumption in spec.assumptions:
+                label, value = assumption_display(assumption.model_dump())
+                st.write(f"{label}：{value}（{'已确认' if assumption.confirmed_by_user else '待确认'}）")
+            if spec.thermo.property_package:
+                st.write(f"物性方法：{spec.thermo.property_package}")
+            if spec.missing_information:
+                st.markdown("**待补充信息**")
+                for item in spec.missing_information:
+                    st.write(item.question)
             for error in readiness["errors"]:
                 st.write(error)
         if len(runs) > 1:

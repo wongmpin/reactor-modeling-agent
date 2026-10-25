@@ -61,6 +61,8 @@ class DeepSeekProvider:
             messages=[
                 {"role": "system", "content": (
                     "将用户化工反应需求转换为符合给定 JSON Schema 的 ReactorModelSpec。"
+                    "所有面向用户的自然语言字段必须使用简体中文，包括reactor_rationale、assumptions的value/rationale/impact、missing_information的reason/question、thermo.rationale。"
+                    "只保留不可翻译的标准名称/专名、化学式/组分名称以及Schema强制要求的枚举机器值；自然语言句子中不要夹杂英文字段名或枚举值。"
                     "不要补造未知参数；缺失项写入 missing_information；新任务不能继承历史条件。"
                     "用户明确给出的温度、压力、进料温度、比例等条件就是已给条件，不要再次询问或要求确认。"
                     "用户明确列出多个工况并要求比较时，默认按各工况分别报告出口流股组成；不要再问是否分开模拟或结果怎么呈现。"
@@ -86,6 +88,7 @@ class DeepSeekProvider:
             messages=[
                 {"role": "system", "content": (
                     "把用户本轮补充合并到当前任务规格，返回符合 Schema 的完整 JSON。"
+                    "所有面向用户的自然语言字段都必须使用简体中文，包括选型依据、假设说明和待补问题；保留化学式、专名和Schema要求的枚举机器值即可。"
                     "保留未修改的已确认信息；不推断未给出的参数；新增假设需标为未确认。"
                     "用户本轮明确给出的值应直接落实，不要重复询问该值；比较工况默认逐工况报告出口流股组成。"
                     "澄清问题、假设理由和影响请用中文，用户只确认部分假设时不要确认其他项。"
@@ -118,6 +121,7 @@ class DeepSeekProvider:
                 {"role": "system", "content": (
                     "根据反应特征、已知参数和建模规则判断反应器。必须只返回 JSON："
                     '{"reactor_type":"...","rationale":"..."}。'
+                    "rationale必须用简体中文解释依据；只能在Schema强制枚举 reactor_type 字段保留机器值，正文不可输出英文枚举、字段名或英文句子。"
                     f"reactor_type 只能是：{choices}。缺数据时仍说明最合适候选及其所需数据，"
                     "规则：已给动力学模型和设备参数时选 CSTR 或 PFR，并依据相态/设备描述解释；"
                     "未给动力学但给定转化率、收率或选择性等工艺指标时可选 conversion；"
@@ -149,6 +153,7 @@ class DeepSeekProvider:
             messages=[
                 {"role": "system", "content": (
                     "你是化工反应器建模对话助手。用户用中文时请自然地用中文交流。"
+                    "所有面向用户的回复一律使用简体中文；仅保留无法翻译的化学式、组分名称、标准缩写/专名和单位。严禁输出selectivity_distribution、thermal_mode、specified_temperature、phase等内部键或枚举值；改用中文术语。"
                     "返回JSON {action,reply}，action只能是update_spec、answer、run、update_and_run。"
                     "update_spec：用户提出新建模需求、补参、确认假设、修改条件；由后续规格工作流处理。"
                     "answer：用户提问解释、询问进度/能力、问候，不修改规格。结合实际规格和真实运行回答。"

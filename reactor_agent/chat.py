@@ -9,10 +9,48 @@ from reactor_agent.service import ReactorAgentService
 
 REACTOR_NAMES = {"conversion": "转化率反应器", "gibbs": "Gibbs 反应器", "equilibrium": "平衡反应器",
                  "cstr": "全混流反应器（CSTR）", "pfr": "平推流反应器（PFR）"}
+CHEMICAL_NAMES = {
+    "toluene": "甲苯", "benzene": "苯", "o-xylene": "邻二甲苯", "m-xylene": "间二甲苯",
+    "p-xylene": "对二甲苯", "ortho-xylene": "邻二甲苯", "meta-xylene": "间二甲苯",
+    "para-xylene": "对二甲苯", "methane": "甲烷", "water": "水", "hydrogen": "氢气",
+    "carbon monoxide": "一氧化碳", "carbon dioxide": "二氧化碳", "ethylene": "乙烯",
+    "ethane": "乙烷", "oxygen": "氧气", "nitrogen": "氮气",
+    "vapour product": "气相产品", "vapor product": "气相产品", "liquid product": "液相产品",
+    "feed": "进料",
+}
+
+
+def chemical_display(name: str) -> str:
+    return CHEMICAL_NAMES.get(name.casefold(), name)
 ASSUMPTION_NAMES = {"annual_methane_throughput": "甲烷年处理量", "methane_annual_throughput": "甲烷年处理量",
                     "annual_operating_hours": "年运行小时数", "feed_pressure": "进料压力",
                     "pressure_drop": "压降", "no_pressure_drop": "无压降", "thermodynamic_data_source": "热力学数据来源",
-                    "no_solid_phase": "不考虑固相"}
+                    "no_solid_phase": "不考虑固相", "selectivity_distribution": "二甲苯异构体选择性",
+                    "xylene_isomer_distribution": "二甲苯异构体选择性", "thermal_mode": "反应器热模式",
+                    "outlet_temperature": "反应器出口温度", "phase": "反应相态",
+                    "no_side_reactions": "副反应范围"}
+ASSUMPTION_VALUES = {
+    "specified_temperature": "指定出口温度（等温/指定温度模式）",
+    "adiabatic": "绝热模式",
+    "vapor": "气相反应",
+    "vapour": "气相反应",
+    "gas": "气相反应",
+    "confirmed": "已确认",
+    "unconfirmed": "待确认",
+    "true": "是",
+    "false": "否",
+}
+
+
+def assumption_display(assumption: dict[str, Any]) -> tuple[str, str]:
+    key = assumption["key"]
+    label = ASSUMPTION_NAMES.get(key)
+    if label is None:
+        # Internal protocol identifiers should not leak into conversational UI.
+        label = "其他建模假设"
+    value = str(assumption["value"])
+    value = ASSUMPTION_VALUES.get(value.casefold(), value)
+    return label, value
 INDEPENDENT_SCENARIO = re.compile(
     r"(?:新(?:的)?(?:测试)?(?:场景|任务)|另一个(?:测试)?场景).{0,30}(?:无关|独立|不要沿用|不继承|别带入|不带入)|"
     r"(?:无关|独立|不要沿用|不继承|别带入|不带入).{0,30}(?:新(?:的)?(?:测试)?(?:场景|任务)|之前的场景)", re.I)

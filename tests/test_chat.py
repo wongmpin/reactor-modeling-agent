@@ -158,3 +158,16 @@ def test_confirmed_isomer_ratio_syncs_selectivity_and_reappears_in_diagnostics(c
     revised = chat.database.get_spec(spec.task_id)
     assert revised.known_parameters.selectivity == {'o-Xylene':1/3, 'm-Xylene':1/3, 'p-Xylene':1/3}
     assert not any('provide product selectivity' in error for error in validate_spec(revised).errors)
+
+
+def test_assumption_display_translates_internal_keys_and_enum_values():
+    from reactor_agent.chat import assumption_display, chemical_display
+    assert assumption_display({'key':'selectivity_distribution','value':'二甲苯异构体等摩尔分布'}) == (
+        '二甲苯异构体选择性','二甲苯异构体等摩尔分布')
+    assert assumption_display({'key':'thermal_mode','value':'specified_temperature'}) == (
+        '反应器热模式','指定出口温度（等温/指定温度模式）')
+    assert assumption_display({'key':'phase','value':'vapor'}) == ('反应相态','气相反应')
+    assert assumption_display({'key':'some_internal_protocol_key','value':'confirmed'}) == (
+        '其他建模假设','已确认')
+    assert chemical_display('Toluene') == '甲苯'
+    assert chemical_display('o-Xylene') == '邻二甲苯'

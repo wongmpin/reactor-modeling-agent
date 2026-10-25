@@ -93,6 +93,20 @@ def test_missing_inputs_disable_run_and_require_explicit_confirmation(ui_service
     assert not app.exception
 
 
+def test_assumption_card_uses_chinese_labels_and_enum_descriptions(ui_service):
+    from reactor_agent.domain.models import Assumption
+    task = ui_service.create_task("localized assumptions", ReactorModelSpec(assumptions=[
+        Assumption(key="thermal_mode", value="specified_temperature", rationale="用户指定出口温度"),
+        Assumption(key="phase", value="vapor", rationale="气相条件已确认"),
+    ]))
+    app = AppTest.from_file(SCRIPT, default_timeout=15).run()
+    labels = [checkbox.label for checkbox in app.checkbox]
+    assert "反应器热模式：指定出口温度（等温/指定温度模式）" in labels
+    assert "反应相态：气相反应" in labels
+    assert not any("thermal_mode" in label or "specified_temperature" in label or label.endswith(": vapor")
+                   for label in labels)
+
+
 def test_failed_result_is_in_chat_and_never_shown_as_success(ui_service):
     task = ui_service.create_task("failed simulation")
     result = SimulationResult(task_id=task.task_id, spec_version=1, case_created=True,
