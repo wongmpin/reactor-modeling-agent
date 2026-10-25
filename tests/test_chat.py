@@ -124,3 +124,37 @@ def test_explicit_unrelated_scenario_splits_task_and_only_reuses_its_own_request
     assert len(chat.database.list_runs(new_task)) == 0
     assert [message['role'] for message in chat.database.chat_messages(new_task)] == ['user', 'assistant']
     assert any(event['event_type'] == 'independent_task_created' for event in chat.database.audit_events(new_task))
+
+
+def test_confirmed_isomer_ratio_syncs_selectivity_and_reappears_in_diagnostics(chat):
+    from reactor_agent.domain.models import FeedStream, ComponentFraction, ReactionSpec, ReactionTerm
+    from reactor_agent.domain.validation import validate_spec
+
+    spec = ReactorModelSpec(
+        user_request='toluene disproportionation',
+        feed=FeedStream(components=[ComponentFraction(name='Toluene', formula='C7H8', value=1)],
+                        flow=10000, flow_unit='kg/h', flow_basis='mass', temperature=380, pressure=25),
+        reactions=[ReactionSpec(reactants=[ReactionTerm(component='Toluene', formula='C7H8', coefficient=2)],
+            products=[ReactionTerm(component='Benzene', formula='C6H6', coefficient=1),
+                      ReactionTerm(component='o-Xylene', formula='C8H10', coefficient=1/3),
+                      ReactionTerm(component='m-Xylene', formula='C8H10', coefficient=1/3),
+                      ReactionTerm(component='p-Xylene', formula='C8H10', coefficient=1/3)],
+            phase='vapor', basis_component='Toluene', conversion=.5)],
+        reactor_type=ReactorType.CONVERSION,
+        assumptions=[Assumption(key='xylene_isomer_distribution', value='o:m:p = 1:1:1', rationale='confirmed', confirmed_by_user=True)],
+        known_parameters={'conversion':.5,'thermal_mode':'specified_temperature',
+                          'target_outlet_temperature':380,'target_pressure':25})
+    chat.service.create_task('toluene', spec)
+
+    assert any('provide product selectivity' in error for error in chat.service.execution_readiness(spec.task_id)['errors'])
+    chat.service.provider.action = 'answer'
+    assert '结构化校验字段未同步' in chat.task_reply(spec.task_id)
+
+    class ReprocessingProvider(Provider):
+        def merge_spec(self, current, clarification):
+            return current
+    chat.service.provider = ReprocessingProvider()
+    chat.service.resolve_input(spec.task_id, '请继续检查', [])
+    revised = chat.database.get_spec(spec.task_id)
+    assert revised.known_parameters.selectivity == {'o-Xylene':1/3, 'm-Xylene':1/3, 'p-Xylene':1/3}
+    assert not any('provide product selectivity' in error for error in validate_spec(revised).errors)

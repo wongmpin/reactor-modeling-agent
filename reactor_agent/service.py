@@ -100,6 +100,25 @@ class ReactorAgentService:
             raise ValueError("Unknown assumption confirmation key.")
         for key in confirmed_keys:
             known[key].confirmed_by_user = True
+        # A confirmed isomer-distribution assumption and the explicitly split
+        # reaction stoichiometry are the source of truth for selectivity. Keep
+        # the redundant structured field synchronized for validation/audit.
+        distribution_confirmed = any(
+            item.confirmed_by_user and any(token in item.key.casefold() for token in ("isomer", "distribution", "selectivity"))
+            for item in spec.assumptions
+        )
+        if distribution_confirmed:
+            selectivity = dict(spec.known_parameters.selectivity)
+            for reaction in spec.reactions:
+                groups: dict[str, list] = {}
+                for product in reaction.products:
+                    groups.setdefault(product.formula, []).append(product)
+                for products in groups.values():
+                    if len(products) > 1:
+                        total = sum(product.coefficient for product in products)
+                        if total > 0:
+                            selectivity.update({product.component: product.coefficient / total for product in products})
+            spec.known_parameters.selectivity = selectivity
         confirmations = [{"key": key, "value": known[key].value} for key in confirmed_keys]
         if confirmations:
             self.database.audit(task_id, "user_assumptions_confirmed", json.dumps(confirmations, ensure_ascii=False))

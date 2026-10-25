@@ -44,15 +44,21 @@ class ChatApplication:
         if readiness["ready"]:
             lines.append(f"第 **{spec.version}** 版条件已通过提交前检查。点击 **开始真实模拟** 后会在 HYSYS 中运行；也可以继续提问或修改工况。")
         elif not questions and not readiness["unconfirmed_assumptions"]:
-            # Deterministic validators supply additional questions even if the parser missed them.
-            if spec.feed is None:
-                lines.append("请描述反应物、产物，以及进料组成、流量、温度和压力。")
-            elif spec.feed.flow is None and not spec.feed.component_mass_flows_kg_h:
-                lines.append("还需要进料流量；也可以给出某组分的年处理量和年运行小时数。")
-            elif spec.feed.pressure is None:
-                lines.append("进料压力是多少？如果采用无压降假设，请明确确认。")
+            # A deterministic validation error is not always a missing user input.
+            lines.append("当前不能开始模拟，具体检查结果：")
+            lines.extend(f"{i}. {error}" for i, error in enumerate(readiness["errors"], 1))
+            if any("provide product selectivity" in error for error in readiness["errors"]):
+                confirmed_distribution = next((item for item in spec.assumptions
+                    if item.confirmed_by_user and any(token in item.key.casefold()
+                    for token in ("isomer", "distribution", "selectivity"))), None)
+                if confirmed_distribution:
+                    lines.append(f"你已确认“{confirmed_distribution.value}”；这是结构化校验字段未同步的问题，不需要你重复提供。请继续对话，我会据此更新规格并重新校验。")
+                else:
+                    lines.append("这项是确实缺少的产物异构体选择性，请提供各异构体比例；不会从计量式推算比例。")
+            elif readiness["errors"]:
+                lines.append("这些是规格或后端能力诊断，并非要求你重复提供已经确认的条件。")
             else:
-                lines.append("还有条件需要核对，详情见“当前条件与诊断”。请补充条件，我会继续检查；不会自动改选反应器。")
+                lines.append("请直接在对话中补充上述具体项目；不会自动改选反应器。")
         return "\n\n".join(lines)
 
     def ensure_restored_conversation(self, task_id: str) -> None:
