@@ -71,6 +71,18 @@ class Database:
                     error TEXT
                 );
                 CREATE INDEX IF NOT EXISTS ix_queue_status_created ON queue(status, created_at);
+                CREATE TABLE IF NOT EXISTS chat_messages (
+                    sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+                    message_id TEXT NOT NULL UNIQUE,
+                    task_id TEXT NOT NULL REFERENCES tasks(task_id),
+                    role TEXT NOT NULL CHECK(role IN ('user','assistant')),
+                    content TEXT NOT NULL,
+                    metadata TEXT NOT NULL DEFAULT '{}',
+                    event_key TEXT,
+                    created_at TEXT NOT NULL,
+                    UNIQUE(task_id, event_key)
+                );
+                CREATE INDEX IF NOT EXISTS ix_chat_task_sequence ON chat_messages(task_id,sequence);
                 CREATE TABLE IF NOT EXISTS audit_events (
                     event_id TEXT PRIMARY KEY,
                     task_id TEXT,
@@ -224,3 +236,21 @@ class Database:
     def heartbeat_queue_item(self, queue_id: str) -> None:
         with self.connect() as conn:
             conn.execute("UPDATE queue SET claimed_at=? WHERE queue_id=? AND status='running'", (self._now(), queue_id))
+
+    def add_chat_message(self, task_id: str, role: str, content: str, metadata: dict[str, Any] | None = None,
+                         event_key: str | None = None) -> None:
+        if role not in {"user", "assistant"}:
+            raise ValueError("Only visible user and assistant messages may be stored.")
+        with self.connect() as conn:
+            conn.execute("INSERT OR IGNORE INTO chat_messages(message_id,task_id,role,content,metadata,event_key,created_at) VALUES(?,?,?,?,?,?,?)",
+                         (str(uuid4()), task_id, role, content, json.dumps(metadata or {}), event_key, self._now()))
+
+    def chat_messages(self, task_id: str) -> list[dict[str, Any]]:
+        with self.connect() as conn:
+            return [{**dict(row), "metadata": json.loads(row["metadata"])} for row in conn.execute(
+                "SELECT * FROM chat_messages WHERE task_id=? ORDER BY sequence", (task_id,))]
+
+    def active_queue_items(self, task_id: str) -> list[dict[str, Any]]:
+        with self.connect() as conn:
+            return [dict(row) for row in conn.execute(
+                "SELECT * FROM queue WHERE task_id=? AND status IN ('queued','running') ORDER BY created_at", (task_id,))]

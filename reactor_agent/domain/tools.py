@@ -1,5 +1,5 @@
 """Explicit MCP output contracts; inputs use domain models and typed arguments."""
-from typing import Any
+from typing import Any, Literal
 from pydantic import Field
 from reactor_agent.domain.models import StrictModel, ReactorModelSpec
 
@@ -36,3 +36,8 @@ class AuditEvent(StrictModel):
     event_type: str
     summary: str
     created_at: str
+
+
+class ConversationReply(StrictModel):
+    action: Literal["update_spec", "answer", "run", "update_and_run"]
+    reply: str = Field(min_length=1)

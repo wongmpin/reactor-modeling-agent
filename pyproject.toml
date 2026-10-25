@@ -15,7 +15,7 @@ dependencies = [
   "langgraph-checkpoint-sqlite>=2.0,<4",
   "openai>=1.50,<3",
   "mcp>=1.15,<2",
-  "streamlit>=1.40,<2",
+  "streamlit>=1.50,<2",
   "python-dotenv>=1.0,<2",
 ]
 

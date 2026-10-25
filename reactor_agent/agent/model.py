@@ -62,6 +62,7 @@ class DeepSeekProvider:
                 {"role": "system", "content": (
                     "将用户化工反应需求转换为符合给定 JSON Schema 的 ReactorModelSpec。"
                     "不要补造未知参数；缺失项写入 missing_information；新任务不能继承历史条件。"
+                    "面向中文用户，澄清问题、假设理由和影响用中文表达，组分名称和协议枚举保留合法值。"
                     f"Schema: {schema}\nDomain workflow instructions:\n{self._skill_instructions()}"
                 )},
                 {"role": "user", "content": request},
@@ -83,6 +84,7 @@ class DeepSeekProvider:
                 {"role": "system", "content": (
                     "把用户本轮补充合并到当前任务规格，返回符合 Schema 的完整 JSON。"
                     "保留未修改的已确认信息；不推断未给出的参数；新增假设需标为未确认。"
+                    "澄清问题、假设理由和影响请用中文，用户只确认部分假设时不要确认其他项。"
                     f"Schema: {schema}\nDomain workflow instructions:\n{self._skill_instructions()}"
                 )},
                 {"role": "user", "content": json.dumps({
@@ -135,6 +137,45 @@ class DeepSeekProvider:
             return ReactorType(data["reactor_type"]), str(data["rationale"])
         except Exception as exc:
             raise ModelUnavailable(f"Invalid reactor selection response: {exc}") from exc
+
+    def conversation_reply(self, spec: ReactorModelSpec, message: str, history: list[dict], latest_run: dict | None = None,
+                           recent_runs: list[dict] | None = None):
+        from reactor_agent.domain.tools import ConversationReply
+        data = self._json_chat(
+            messages=[
+                {"role": "system", "content": (
+                    "你是化工反应器建模对话助手。用户用中文时请自然地用中文交流。"
+                    "返回JSON {action,reply}，action只能是update_spec、answer、run、update_and_run。"
+                    "update_spec：用户提出新建模需求、补参、确认假设、修改条件；由后续规格工作流处理。"
+                    "answer：用户提问解释、询问进度/能力、问候，不修改规格。结合实际规格和真实运行回答。"
+                    "run：用户明确要求按当前已确认条件运行；update_and_run：用户明确补参或改条件并要求运行。"
+                    "仅在用户明确要求执行时使用run/update_and_run，否定、假设、询问如何运行不能视为执行授权。"
+                    "reply为简洁友好的自然语言回复。不要输出内部JSON字段名或假装已经调用工具。"
+                    "当action为update_spec或update_and_run时，reply只简短说明将核对条件；"
+                    "不要提前列问题或宣称已保存条件，后续建模节点会产生完整澄清问题和选型依据。"
+                    "不要编造参数、假设已被确认、运行状态或结果；只引用结构化真实结果。"
+                    "recent_real_runs包含当前任务最近多版的真实记录；比较工况时应查阅这些记录而非只看最新一次。"
+                    "工程校验失败的记录不能作为有效结果；规格不同的运行不能默认为相同条件。"
+                    "先按真实读数核对增减方向，再解释；单个反应的平衡移动不等于耦合体系的最终组分变化。"
+                    "不要用原理推断推翻已读出的真实数值；此前回答误读时应明确纠正。"
+                    "若用户说按上一版/上述条件，优先参考当前任务规格及对话；新任务不得继承旧任务。"
+                    "聊天上下文帮助理解指代，但规格和运行才是事实来源。不要在本步选择或修改反应器，选型由专门模型节点完成。"
+                    "若有未确认假设，提醒用户逐项确认或在对话明确说明。"
+                    "固定温压和进料配比下，总流量的同比缩放未必改变平衡摩尔组成，但绝对产量和热负荷需要流量。"
+                    f"\nDomain workflow instructions:\n{self._skill_instructions()}" )},
+                {"role": "user", "content": json.dumps({
+                    "current_spec": spec.model_dump(mode="json"),
+                    "recent_conversation": [{"role": item["role"], "content": item["content"]} for item in history[-10:]],
+                    "latest_real_run": latest_run,
+                    "recent_real_runs": recent_runs or [],
+                    "message": message,
+                }, ensure_ascii=False)},
+            ], response_format={"type": "json_object"},
+        )
+        try:
+            return ConversationReply.model_validate(data)
+        except Exception as exc:
+            raise ModelUnavailable("Conversation response did not match its action schema.") from exc
 
     def check_connectivity(self) -> dict[str, Any]:
         json_output = self._json_chat(
