@@ -2,13 +2,14 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import threading
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
 from reactor_agent.agent.graph import build_workflow, invoke_workflow
-from reactor_agent.domain.models import ReactorModelSpec, SimulationResult, ReactionTerm
+from reactor_agent.domain.models import ChemicalSpecies, ReactorModelSpec, SimulationResult, ReactionTerm
 from reactor_agent.domain.validation import validate_reactor_choice, validate_spec, validate_backend_spec, validate_engineering
 from reactor_agent.storage.db import Database
 from reactor_agent.harness import Harness
@@ -32,6 +33,62 @@ class ReactorAgentService:
         revised = prior.next_version(**changes)
         self.database.save_spec(revised)
         return revised
+
+    def delete_task(self, task_id: str) -> None:
+        self.database.delete_task(task_id)
+
+    @staticmethod
+    def _normalize_feed_constraints(spec: ReactorModelSpec) -> ReactorModelSpec:
+        """Align deterministic feed constraints with the specification's component names."""
+        if spec.feed is None or not spec.feed.component_mass_flows_kg_h:
+            return spec
+        by_name = {component.name.casefold(): component.name for component in spec.feed.components}
+        by_formula = {component.formula.casefold(): component.name for component in spec.feed.components}
+        aliases = {"ch4": "甲烷", "methane": "甲烷", "h2o": "水", "water": "水", "steam": "水"}
+        normalized: dict[str, float] = {}
+        changed = False
+        for key, flow in spec.feed.component_mass_flows_kg_h.items():
+            alias = aliases.get(key.casefold())
+            canonical = (by_name.get(key.casefold()) or by_formula.get(key.casefold()) or
+                         (by_name.get(alias.casefold()) if alias else None) or key)
+            normalized[canonical] = normalized.get(canonical, 0.0) + flow
+            changed = changed or canonical != key
+        if not changed:
+            return spec
+        feed = spec.feed.model_copy(update={"component_mass_flows_kg_h": normalized})
+        return spec.model_copy(update={"feed": feed})
+
+    @staticmethod
+    def _apply_explicit_feed_pressure(spec: ReactorModelSpec, request: str) -> ReactorModelSpec:
+        """Persist a pressure only when the user explicitly states/ confirms it."""
+        if spec.feed is None or spec.feed.pressure is not None or not request:
+            return spec
+        text = request.casefold()
+        pressure_context = any(token in text for token in ("进料压力", "feed pressure", "入口压力", "inlet pressure"))
+        confirmation_context = any(token in text for token in ("确认", "采用", "设为", "设置为", "取", "等于", "忽略压降", "无压降"))
+        if not (pressure_context and confirmation_context):
+            return spec
+        match = re.search(r"(?:进料|入口|feed|inlet)?\s*压力[^0-9]{0,20}(\d+(?:\.\d+)?)\s*(?:bar|bara|kpa|千帕|兆帕|mpa)?", text, re.I)
+        if not match:
+            return spec
+        value = float(match.group(1))
+        unit_match = re.search(r"\d+(?:\.\d+)?\s*(bar|bara|kpa|千帕|兆帕|mpa)", text, re.I)
+        unit = (unit_match.group(1).lower() if unit_match else spec.feed.pressure_unit)
+        unit = {"bara": "bar", "kpa": "kPa", "千帕": "kPa", "mpa": "MPa", "兆帕": "MPa"}.get(unit, unit)
+        feed = spec.feed.model_copy(update={"pressure": value, "pressure_unit": unit})
+        assumptions = list(spec.assumptions)
+        existing = next((item for item in assumptions if item.key in {"feed_pressure", "进料压力"}), None)
+        value_text = f"进料压力取 {value:g} {unit}；按用户确认的压降条件执行。"
+        if existing:
+            existing.value = value_text
+            existing.confirmed_by_user = True
+        else:
+            from reactor_agent.domain.models import Assumption
+            assumptions.append(Assumption(key="feed_pressure", value=value_text,
+                                          rationale="用户在补充消息中明确确认进料压力。",
+                                          confirmed_by_user=True,
+                                          impact="用于设置 HYSYS 进料边界；出口压力仍按各工况边界执行。"))
+        return spec.model_copy(update={"feed": feed, "assumptions": assumptions})
 
     @staticmethod
     def _apply_confirmed_xylene_distribution(spec: ReactorModelSpec) -> ReactorModelSpec:
@@ -66,7 +123,16 @@ class ReactorAgentService:
             reaction.products = products
         if not changed:
             return spec
+        # Keep the explicit Gibbs/adapter species universe consistent with the
+        # reaction products; the lumped xylene name is not a valid HYSYS id.
+        allowed_species: list[ChemicalSpecies] = []
+        for species in spec.allowed_species:
+            if species.formula == "C8H10" and species.name.strip().casefold() in {"二甲苯", "xylenes", "xylene isomers"}:
+                allowed_species.extend(ChemicalSpecies(name=name, formula=formula) for name, formula in isomers)
+            elif not (species.formula == "C8H10" and species.name in {name for name, _ in isomers}):
+                allowed_species.append(species)
         spec.known_parameters.selectivity.update({name: 1 / 3 for name, _ in isomers})
+        spec.allowed_species = allowed_species
         return spec
 
     def process_request(self, task_id: str, request: str = "", spec_json: str = "") -> dict[str, Any]:
@@ -83,6 +149,10 @@ class ReactorAgentService:
             conn.close()
         if output.get("spec"):
             spec = ReactorModelSpec.model_validate(output["spec"])
+            # Persist the deterministic component-name normalization so the saved
+            # specification, queue payload, and HYSYS adapter use one vocabulary.
+            spec = self._normalize_feed_constraints(spec)
+            spec = self._apply_explicit_feed_pressure(spec, request)
             spec = self._apply_confirmed_xylene_distribution(spec)
             try:
                 prior = self.database.get_spec(task_id)
@@ -113,13 +183,24 @@ class ReactorAgentService:
     def execution_readiness(self, task_id: str) -> dict[str, Any]:
         """Read-only preflight for UI; never connects COM or confirms assumptions."""
         spec = self.database.get_spec(task_id)
+        normalized = self._normalize_feed_constraints(spec)
+        questions = [item.model_dump() for item in spec.missing_information if item.blocking]
+        if normalized.feed and normalized.feed.pressure is None:
+            case_pressures = {case.pressure for case in normalized.operating_cases if case.pressure is not None}
+            case_feed_pressures_complete = bool(normalized.operating_cases) and all(
+                case.feed_pressure is not None for case in normalized.operating_cases)
+            if (len(case_pressures) == 1 and not case_feed_pressures_complete
+                    and not any(item["field"] == "feed.pressure" for item in questions)):
+                pressure = next(iter(case_pressures))
+                questions.append({"field": "feed.pressure", "reason": "进料压力未明确给出。",
+                                  "question": f"请确认进料压力是否采用 {pressure:g} bar，并确认忽略压降？", "blocking": True})
         errors = list(dict.fromkeys([
-            *validate_spec(spec).errors,
+            *validate_spec(normalized).errors,
             *validate_reactor_choice(spec).errors,
             *Harness().authorize_execution(spec, self.database.audit_events(task_id)).errors,
         ]))
         return {"ready": not errors, "errors": errors,
-                "questions": [item.model_dump() for item in spec.missing_information if item.blocking],
+                "questions": questions,
                 "unconfirmed_assumptions": [item.model_dump() for item in spec.assumptions if not item.confirmed_by_user]}
 
     def resolve_input(self, task_id: str, clarification: str, confirmed_keys: list[str],
@@ -170,24 +251,56 @@ class ReactorAgentService:
 
     def queue_execution(self, task_id: str) -> str:
         spec = self.database.get_spec(task_id)
-        validation = validate_spec(spec)
-        if not validation.passed:
-            raise ValueError("Model specification failed validation: " + "; ".join(validation.errors))
         from reactor_agent.hysys.worker import HysysWorker
         worker = HysysWorker(timeout_seconds=30)
         try:
             capabilities = worker.inspect()
         finally:
             worker.stop()
-        backend_report = validate_reactor_choice(spec, set(capabilities.supported_reactors))
-        if not backend_report.passed:
-            raise ValueError("Backend capability gate: " + "; ".join(backend_report.errors))
-        backend_spec = Harness().authorize_execution(spec, self.database.audit_events(task_id))
-        if not backend_spec.passed:
-            raise ValueError("Backend input gate: " + "; ".join(backend_spec.errors))
-        queue_id = self.database.enqueue(task_id, {"spec_version": spec.version, "spec": json.loads(spec.model_dump_json())})
+        cases = spec.operating_cases or [None]
+        base_backend_report = validate_reactor_choice(spec, set(capabilities.supported_reactors))
+        if not base_backend_report.passed:
+            raise ValueError("Backend capability gate: " + "; ".join(base_backend_report.errors))
+        base_backend_spec = Harness().authorize_execution(spec, self.database.audit_events(task_id))
+        if not base_backend_spec.passed:
+            raise ValueError("Backend input gate: " + "; ".join(base_backend_spec.errors))
+        queue_id = None
+        for index, case in enumerate(cases):
+            case_spec = self._normalize_feed_constraints(spec.model_copy(deep=True))
+            case_name = None
+            if case is not None:
+                case_name = case.name
+                updates = {}
+                feed_updates = {}
+                if case.feed_temperature is not None:
+                    feed_updates["temperature"] = case.feed_temperature
+                    feed_updates["temperature_unit"] = case.feed_temperature_unit
+                if case.feed_pressure is not None:
+                    feed_updates["pressure"] = case.feed_pressure
+                    feed_updates["pressure_unit"] = case.feed_pressure_unit
+                if feed_updates:
+                    case_spec.feed = case_spec.feed.model_copy(update=feed_updates)
+                if case.outlet_temperature is not None:
+                    updates["target_outlet_temperature"] = case.outlet_temperature
+                    updates["target_outlet_temperature_unit"] = case.outlet_temperature_unit
+                if case.pressure is not None:
+                    updates["target_pressure"] = case.pressure
+                    updates["target_pressure_unit"] = case.pressure_unit
+                case_spec.known_parameters = case_spec.known_parameters.model_copy(update=updates)
+                case_spec.operating_cases = []
+            validation = validate_spec(case_spec)
+            if not validation.passed:
+                raise ValueError(f"Model specification failed validation ({case_name or 'default'}): " + "; ".join(validation.errors))
+            backend_report = validate_reactor_choice(case_spec, set(capabilities.supported_reactors))
+            if not backend_report.passed:
+                raise ValueError("Backend capability gate: " + "; ".join(backend_report.errors))
+            payload = {"spec_version": spec.version, "case_name": case_name,
+                       "case_index": index, "case_count": len(cases),
+                       "spec": json.loads(case_spec.model_dump_json())}
+            current_queue_id = self.database.enqueue(task_id, payload)
+            queue_id = queue_id or current_queue_id
         self.database.set_status(task_id, "queued")
-        return queue_id
+        return queue_id or ""
 
     def backend_capabilities(self) -> dict[str, Any]:
         from reactor_agent.hysys.worker import HysysWorker
@@ -212,6 +325,8 @@ class ReactorAgentService:
         run = SimulationResult(
             task_id=item["task_id"],
             spec_version=int(payload["spec_version"]),
+            case_name=payload.get("case_name"),
+            case_index=payload.get("case_index"),
             diagnostics=[],
         )
         worker = None
@@ -238,6 +353,8 @@ class ReactorAgentService:
             if not outcome.get("result"):
                 raise RuntimeError("; ".join(outcome.get("diagnostics", ["Execution graph returned no result."])))
             run = SimulationResult.model_validate(outcome["result"])
+            run.case_name = payload.get("case_name")
+            run.case_index = payload.get("case_index")
             status = outcome["status"]
             self.database.complete_queue_item(item["queue_id"], error=None if run.engineering_validation_passed else "; ".join(run.diagnostics))
             self.database.save_run(run.run_id, run.task_id, run.spec_version, status, run.model_dump(mode="json"))

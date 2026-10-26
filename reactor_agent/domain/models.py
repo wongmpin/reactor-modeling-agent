@@ -134,6 +134,20 @@ class MissingInformation(StrictModel):
     blocking: bool = True
 
 
+class OperatingCase(StrictModel):
+    """One steady-state operating point sharing the parent model specification."""
+
+    name: str = Field(min_length=1)
+    feed_temperature: float | None = None
+    feed_temperature_unit: str = "degC"
+    feed_pressure: float | None = Field(default=None, gt=0)
+    feed_pressure_unit: str = "bar"
+    outlet_temperature: float | None = None
+    outlet_temperature_unit: str = "degC"
+    pressure: float | None = Field(default=None, gt=0)
+    pressure_unit: str = "bar"
+
+
 class ReactorModelSpec(StrictModel):
     task_id: str = Field(default_factory=lambda: str(uuid4()))
     version: int = Field(default=1, ge=1)
@@ -145,6 +159,8 @@ class ReactorModelSpec(StrictModel):
     reactor_rationale: str | None = None
     thermo: ThermoSpec = Field(default_factory=ThermoSpec)
     known_parameters: KnownParameters = Field(default_factory=KnownParameters)
+    operating_cases: list[OperatingCase] = Field(default_factory=list,
+        description="Multiple steady-state cases to run sequentially with shared model inputs")
     assumptions: list[Assumption] = Field(default_factory=list)
     missing_information: list[MissingInformation] = Field(default_factory=list)
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
@@ -179,6 +195,8 @@ class StreamResult(StrictModel):
 class SimulationResult(StrictModel):
     task_id: str
     spec_version: int
+    case_name: str | None = None
+    case_index: int | None = None
     run_id: str = Field(default_factory=lambda: str(uuid4()))
     case_created: bool = False
     solver_converged: bool = False

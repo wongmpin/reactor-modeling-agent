@@ -73,6 +73,52 @@ def test_missing_data_and_unconfirmed_assumptions_block_execution(chat, monkeypa
         chat.confirm(task.task_id, 1, ["made_up"])
 
 
+def test_confirmation_explains_new_immutable_spec_snapshot(chat):
+    task = chat.service.create_task("confirm assumptions", ReactorModelSpec(
+        assumptions=[Assumption(key="thermal_mode", value="specified_temperature", rationale="proposal")]))
+    chat.confirm(task.task_id, 1, ["thermal_mode"])
+
+    current = chat.database.get_spec(task.task_id)
+    assert current.version == 2
+    message = chat.database.chat_messages(task.task_id)[-1]
+    assert "第 **2** 版条件快照" in message["content"]
+    assert "此前版本不会被覆盖" in message["content"]
+
+
+def test_temperature_change_creates_new_spec_without_mutating_prior_version(chat):
+    class TemperatureProvider(Provider):
+        def merge_spec(self, current, clarification):
+            assert "600" in clarification
+            parameters = current.known_parameters.model_copy(update={"target_outlet_temperature": 600.0})
+            return current.model_copy(update={"known_parameters": parameters})
+
+    chat.service.provider = TemperatureProvider()
+    spec = ReactorModelSpec.model_validate_json(
+        (Path(__file__).parents[1] / "examples" / "hydrogenation.json").read_text(encoding="utf-8"))
+    spec.known_parameters.target_outlet_temperature = 380.0
+    task = chat.service.create_task("temperature change", spec)
+
+    chat.send(task.task_id, "将出口温度改为600°C")
+
+    current = chat.database.get_spec(task.task_id)
+    assert current.version == 2
+    assert current.known_parameters.target_outlet_temperature == 600.0
+    assert chat.database.get_spec(task.task_id, 1).known_parameters.target_outlet_temperature == 380.0
+    assert chat.database.chat_messages(task.task_id)[-1]["metadata"]["kind"] == "spec_update"
+
+
+def test_multi_case_reply_uses_case_names_without_repeating_temperatures(chat):
+    from reactor_agent.domain.models import OperatingCase
+    spec = ReactorModelSpec(operating_cases=[
+        OperatingCase(name="工况1：出口710°C、13.5 bar", outlet_temperature=710, pressure=13.5),
+        OperatingCase(name="工况2：出口600°C、13.5 bar", outlet_temperature=600, pressure=13.5),
+    ])
+    task = chat.service.create_task("multi-case", spec)
+    reply = chat.task_reply(task.task_id)
+    assert "工况1：出口710°C、13.5 bar、工况2：出口600°C、13.5 bar" in reply
+    assert "710°C、13.5 bar 710°C" not in reply
+
+
 def test_model_failure_preserves_message_and_can_retry(chat):
     chat.service.provider.fail = True
     task_id = chat.send(None, "new requirement")
@@ -164,7 +210,7 @@ def test_confirmed_isomer_ratio_syncs_selectivity_and_reappears_in_diagnostics(c
 
 
 def test_assumption_display_translates_internal_keys_and_enum_values():
-    from reactor_agent.chat import assumption_display, chemical_display
+    from reactor_agent.chat import assumption_display, chemical_display, diagnostic_display
     assert assumption_display({'key':'selectivity_distribution','value':'二甲苯异构体等摩尔分布'}) == (
         '二甲苯异构体选择性','二甲苯异构体等摩尔分布')
     assert assumption_display({'key':'thermal_mode','value':'specified_temperature'}) == (
@@ -174,3 +220,8 @@ def test_assumption_display_translates_internal_keys_and_enum_values():
         '其他建模假设','已确认')
     assert chemical_display('Toluene') == '甲苯'
     assert chemical_display('o-Xylene') == '邻二甲苯'
+    assert diagnostic_display('Feed pressure is required.') == '必须提供进料压力。'
+    assert diagnostic_display('Specified-temperature operation requires target_outlet_temperature.') == '指定出口温度模式需要提供目标出口温度。'
+    assert diagnostic_display('Component flow constraint CH4 requires a positive feed composition entry.') == '组分流量约束 CH4 要求进料组成中存在正值。'
+    assert diagnostic_display('Expected one inlet and both vapor/liquid boundary outlets.') == 'HYSYS 结果应包含一个进料口以及气相、液相两个边界出口。'
+    assert diagnostic_display('configure_basis: HysysAdapterError: test') == '配置物性基础：HYSYS 适配器错误：test'

@@ -160,11 +160,16 @@ class Database:
 
     def enqueue(self, task_id: str, payload: dict[str, Any]) -> str:
         queue_id = str(uuid4())
+        case_key = payload.get("case_index") if payload.get("case_index") is not None else (payload.get("case_name") or "__default__")
         with self.connect() as conn:
             conn.execute("BEGIN IMMEDIATE")
             existing = conn.execute("SELECT queue_id,payload FROM queue WHERE task_id=? AND status IN ('queued','running')", (task_id,)).fetchall()
             for row in existing:
-                if json.loads(row["payload"]).get("spec_version") == payload.get("spec_version"):
+                existing_payload = json.loads(row["payload"])
+                existing_case_key = (existing_payload.get("case_index") if existing_payload.get("case_index") is not None
+                                     else (existing_payload.get("case_name") or "__default__"))
+                if (existing_payload.get("spec_version") == payload.get("spec_version")
+                        and existing_case_key == case_key):
                     conn.commit()
                     return row["queue_id"]
             conn.execute(
@@ -254,3 +259,21 @@ class Database:
         with self.connect() as conn:
             return [dict(row) for row in conn.execute(
                 "SELECT * FROM queue WHERE task_id=? AND status IN ('queued','running') ORDER BY created_at", (task_id,))]
+
+    def delete_task(self, task_id: str) -> None:
+        """Delete a task's persisted conversation and execution records atomically."""
+        with self.connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            task = conn.execute("SELECT 1 FROM tasks WHERE task_id=?", (task_id,)).fetchone()
+            if task is None:
+                raise KeyError(f"Task not found: {task_id}")
+            active = conn.execute(
+                "SELECT 1 FROM queue WHERE task_id=? AND status IN ('queued','running') LIMIT 1", (task_id,)
+            ).fetchone()
+            if active is not None:
+                conn.rollback()
+                raise ValueError("任务正在运行，完成或停止 Worker 后才能删除。")
+            for table in ("queue", "runs", "specs", "chat_messages", "audit_events"):
+                conn.execute(f"DELETE FROM {table} WHERE task_id=?", (task_id,))
+            conn.execute("DELETE FROM tasks WHERE task_id=?", (task_id,))
+            conn.commit()

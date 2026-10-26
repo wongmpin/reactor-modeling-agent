@@ -67,6 +67,9 @@ class ValidationReport:
 
 def validate_spec(spec: ReactorModelSpec) -> ValidationReport:
     report = ValidationReport()
+    cases = spec.operating_cases
+    case_feed_temperatures_complete = bool(cases) and all(case.feed_temperature is not None for case in cases)
+    case_feed_pressures_complete = bool(cases) and all(case.feed_pressure is not None for case in cases)
     if spec.feed is None:
         report.errors.append("Feed composition is required.")
     else:
@@ -96,17 +99,17 @@ def validate_spec(spec: ReactorModelSpec) -> ValidationReport:
                     report.errors.append("Feed flow rate must be positive.")
             except (PintError, TypeError) as exc:
                 report.errors.append(f"Invalid feed flow unit {spec.feed.flow_unit!r}: {exc}")
-        if spec.feed.temperature is None:
+        if spec.feed.temperature is None and not case_feed_temperatures_complete:
             report.errors.append("Feed temperature is required.")
-        else:
+        elif spec.feed.temperature is not None:
             try:
                 if convert_temperature(spec.feed.temperature, spec.feed.temperature_unit) <= 0:
                     report.errors.append("Feed temperature must be above absolute zero.")
             except (PintError, TypeError) as exc:
                 report.errors.append(f"Invalid temperature unit {spec.feed.temperature_unit!r}: {exc}")
-        if spec.feed.pressure is None:
+        if spec.feed.pressure is None and not case_feed_pressures_complete:
             report.errors.append("Feed pressure is required.")
-        else:
+        elif spec.feed.pressure is not None:
             try:
                 if convert_pressure(spec.feed.pressure, spec.feed.pressure_unit) <= 0:
                     report.errors.append("Feed pressure must be positive.")
@@ -294,15 +297,29 @@ def validate_backend_spec(spec: ReactorModelSpec) -> ValidationReport:
     if (spec.thermo.property_package or "").casefold() not in {"peng-robinson", "peng robinson", "pr", "pengrob"}:
         report.errors.append("This adapter currently verifies only Peng-Robinson; confirm a suitable property method.")
     kp = spec.known_parameters
+    cases = spec.operating_cases
+    case_feed_pressures_complete = bool(cases) and all(case.feed_pressure is not None for case in cases)
+    case_temperatures_complete = bool(cases) and all(case.outlet_temperature is not None for case in cases)
+    case_pressures_complete = bool(cases) and all(case.pressure is not None for case in cases)
     if kp.thermal_mode not in {"specified_temperature", "adiabatic"}:
         report.errors.append("Specify thermal_mode: specified_temperature or adiabatic; no silent thermal assumption.")
-    if kp.thermal_mode == "specified_temperature" and kp.target_outlet_temperature is None:
-        report.errors.append("Specified-temperature operation requires target_outlet_temperature.")
-    if kp.target_pressure is None:
+    if (kp.thermal_mode == "specified_temperature" and kp.target_outlet_temperature is None
+            and not case_temperatures_complete):
+        report.errors.append("Specified-temperature operation requires target_outlet_temperature or an outlet temperature for every operating case.")
+    if kp.target_pressure is None and not case_pressures_complete:
         report.errors.append("Specify target_pressure, including an explicit zero-pressure-drop assumption if appropriate.")
-    elif spec.feed and spec.feed.pressure is not None:
-        if convert_pressure(kp.target_pressure, kp.target_pressure_unit) > convert_pressure(spec.feed.pressure, spec.feed.pressure_unit) + 1e-6:
-            report.errors.append("This reactor adapter cannot increase pressure above the inlet pressure.")
+    elif spec.feed and (spec.feed.pressure is not None or case_feed_pressures_complete):
+        pressure_pairs = []
+        if kp.target_pressure is not None and spec.feed.pressure is not None:
+            pressure_pairs = [(kp.target_pressure, kp.target_pressure_unit,
+                               spec.feed.pressure, spec.feed.pressure_unit)]
+        elif kp.target_pressure is None:
+            pressure_pairs = [(case.pressure, case.pressure_unit, case.feed_pressure, case.feed_pressure_unit)
+                              for case in cases if case.pressure is not None and case.feed_pressure is not None]
+        for target_pressure, target_unit, feed_pressure, feed_unit in pressure_pairs:
+            if convert_pressure(target_pressure, target_unit) > convert_pressure(feed_pressure, feed_unit) + 1e-6:
+                report.errors.append("This reactor adapter cannot increase pressure above the inlet pressure.")
+                break
     if spec.reactor_type == ReactorType.GIBBS and not spec.thermo.thermodynamic_data_source:
         report.errors.append("Confirm the thermodynamic data source and the Gibbs species universe (e.g. HYSYS databank; no solids).")
     if spec.reactor_type == ReactorType.CONVERSION:

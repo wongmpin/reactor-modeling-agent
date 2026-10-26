@@ -7,7 +7,7 @@ from pathlib import Path
 
 import streamlit as st
 from dotenv import load_dotenv
-from reactor_agent.chat import REACTOR_NAMES, assumption_display, chemical_display, ChatApplication
+from reactor_agent.chat import REACTOR_NAMES, assumption_display, chemical_display, diagnostic_display, ChatApplication
 
 load_dotenv()
 st.set_page_config(page_title="化工反应器建模 Agent", page_icon="⚗️", layout="wide")
@@ -18,14 +18,30 @@ service = application.service
 tasks = service.database.list_tasks()
 task_ids = {task["task_id"] for task in tasks}
 NEW = "__new__"
+STATUS_LABELS = {
+    "needs_input": "待补充", "spec_validated": "待运行", "ready": "待运行",
+    "queued": "排队中", "running": "运行中", "validated": "已完成",
+    "solved": "已求解", "validation_failed": "校验失败", "failed": "运行失败",
+}
 
-if "pending_task_id" in st.session_state:
-    st.session_state["selected_task"] = st.session_state.pop("pending_task_id")
+pending_task_id = st.session_state.pop("pending_task_id", None)
+if pending_task_id:
+    # A prompt can create a task immediately before rerun. Refresh the list
+    # before validating the pending id, otherwise it can fall back to NEW.
+    if pending_task_id not in task_ids:
+        tasks = service.database.list_tasks()
+        task_ids = {task["task_id"] for task in tasks}
+    st.session_state["selected_task"] = pending_task_id
+requested_task_id = st.query_params.get("task")
 if "selected_task" not in st.session_state:
-    requested = st.query_params.get("task")
-    st.session_state["selected_task"] = requested if requested in task_ids else (tasks[0]["task_id"] if tasks else NEW)
+    st.session_state["selected_task"] = (requested_task_id if requested_task_id in task_ids
+                                          else (tasks[0]["task_id"] if tasks else NEW))
 if st.session_state["selected_task"] not in task_ids | {NEW}:
-    st.session_state["selected_task"] = NEW
+    st.session_state["selected_task"] = requested_task_id if requested_task_id in task_ids else NEW
+elif st.session_state["selected_task"] == NEW and requested_task_id in task_ids:
+    # Restore a task after a fragment/app rerun if the URL still identifies it.
+    # Clicking "新建对话" removes the query parameter, so it remains explicit.
+    st.session_state["selected_task"] = requested_task_id
 
 
 def new_conversation():
@@ -35,10 +51,52 @@ def new_conversation():
 
 with st.sidebar:
     st.button("＋ 新建对话", key="new_chat", on_click=new_conversation, width="stretch")
-    labels = {item["task_id"]: f"{item['user_request'][:36] or '建模对话'} · v{item['current_version']}" for item in tasks}
-    selected_id = st.selectbox("历史对话", [NEW, *labels], key="selected_task",
-                               format_func=lambda key: "新对话" if key == NEW else labels[key])
-    st.caption("每段新对话独立保存条件；历史对话可继续补参和修改。")
+    st.markdown("**历史对话**")
+    history_query = st.text_input("筛选历史对话", key="history_filter",
+                                  placeholder="按标题或任务 ID 筛选", label_visibility="collapsed")
+    visible_tasks = [item for item in tasks if not history_query or
+                     history_query.casefold() in (item["user_request"] or "").casefold() or
+                     history_query.casefold() in item["task_id"].casefold()]
+    st.caption(f"显示 {len(visible_tasks)} / {len(tasks)} 个任务 · 条件和运行记录独立保存")
+    with st.container(height=400, border=False):
+        if not visible_tasks:
+            st.caption("暂无历史任务")
+        for item in visible_tasks:
+            task_key = item["task_id"]
+            title = " ".join((item["user_request"] or "建模对话").split())
+            title = title[:24] + ("…" if len(title) > 24 else "")
+            state = STATUS_LABELS.get(item["status"], item["status"])
+            label = f"{'● ' if task_key == st.session_state.get('selected_task') else ''}{title}\n{state} · v{item['current_version']} · {task_key[:8]}"
+            open_col, delete_col = st.columns([0.86, 0.14], gap="small")
+            if open_col.button(label, key=f"open_task_{task_key}", width="stretch",
+                               type="primary" if task_key == st.session_state.get("selected_task") else "secondary"):
+                st.session_state["selected_task"] = task_key
+                st.query_params["task"] = task_key
+                st.rerun()
+            if delete_col.button("", key=f"delete_task_{task_key}", icon=":material/delete:",
+                                 help="删除这段历史对话及其运行记录"):
+                st.session_state["delete_task_id"] = task_key
+                st.rerun()
+    delete_id = st.session_state.get("delete_task_id")
+    if delete_id:
+        target = next((item for item in tasks if item["task_id"] == delete_id), None)
+        if target:
+            st.warning(f"确定删除“{(target['user_request'] or '建模对话')[:30]}”吗？规格、消息、运行记录和审计记录都会删除。已保存的 HYSYS 案例文件不受影响。")
+            confirm_col, cancel_col = st.columns(2)
+            if confirm_col.button("确认删除", key="confirm_delete_task", type="primary", width="stretch"):
+                try:
+                    service.delete_task(delete_id)
+                    st.session_state.pop("delete_task_id", None)
+                    if st.session_state.get("selected_task") == delete_id:
+                        st.session_state["selected_task"] = NEW
+                        st.query_params.pop("task", None)
+                    st.rerun()
+                except Exception as exc:
+                    st.error(str(exc))
+            if cancel_col.button("取消", key="cancel_delete_task", width="stretch"):
+                st.session_state.pop("delete_task_id", None)
+                st.rerun()
+    st.caption("每段对话独立保存；删除只影响历史记录，不会删除已下载的案例文件。")
     with st.expander("本地运行设置"):
         st.write("模型：", os.getenv("DEEPSEEK_MODEL", "deepseek-flash"))
         st.write("API Key：", "已配置" if os.getenv("DEEPSEEK_API_KEY") else "未配置")
@@ -49,6 +107,7 @@ with st.sidebar:
             except Exception as exc:
                 st.error(str(exc))
 
+selected_id = st.session_state.get("selected_task", NEW)
 task_id = None if selected_id == NEW else selected_id
 if task_id:
     st.query_params["task"] = task_id
@@ -57,7 +116,7 @@ else:
     st.query_params.pop("task", None)
 
 
-def render_run(row):
+def render_run(row, current_version: int | None = None):
     result = row["payload"]
     flags = {"案例已保存": result.get("case_created", False),
              "求解已收敛": result.get("solver_converged", False),
@@ -67,9 +126,14 @@ def render_run(row):
         st.success(f"第 {row['spec_version']} 版真实模拟通过工程校验。")
     else:
         st.error("本次运行未通过全部检查，请查看诊断。")
-    st.caption(f"HYSYS {result.get('hysys_version') or '版本未读取'} · 运行 {row['run_id'][:8]}")
+    version_context = f" · 当前条件第 {current_version} 版" if current_version is not None else ""
+    case_context = f" · 工况 {result.get('case_name')}" if result.get('case_name') else ""
+    st.caption(
+        f"本任务 {row['task_id'][:8]} · 第 {row['spec_version']} 版历史运行记录{case_context}{version_context} · "
+        f"HYSYS {result.get('hysys_version') or '版本未读取'} · 运行 {row['run_id'][:8]}"
+    )
     for diagnostic in result.get("diagnostics", []):
-        st.warning(diagnostic)
+        st.warning(diagnostic_display(diagnostic))
     streams = result.get("streams", [])
     if streams:
         st.dataframe([{"物流": chemical_display(stream["name"]), "温度 °C": stream["temperature_k"] - 273.15 if stream.get("temperature_k") is not None else None,
@@ -102,10 +166,18 @@ def conversation():
         messages = [{"role": "assistant", "content": "你好！请告诉我你想模拟什么反应，以及已知的进料和工况。我会解释选型依据、询问缺少的条件，再由你确认是否运行。\n\n例如：甲烷与水蒸气重整，想比较不同出口温度的组成。", "metadata": {}}]
     for message in messages:
         with st.chat_message(message["role"]):
-            st.markdown(message["content"])
             metadata = message["metadata"]
             if metadata.get("kind") == "run_result" and metadata.get("run_id") in runs:
-                render_run(runs[metadata["run_id"]])
+                run_payload = runs[metadata["run_id"]]["payload"]
+                case_note = f"（工况：{run_payload['case_name']}）" if run_payload.get("case_name") else ""
+                st.markdown(
+                    f"HYSYS 第 **{metadata.get('spec_version', runs[metadata['run_id']]['spec_version'])}** "
+                    f"版运行记录已返回{case_note}（本任务历史记录）。"
+                )
+                render_run(runs[metadata["run_id"]], current_version=service.database.get_spec(task_id).version)
+            else:
+                content = diagnostic_display(message["content"]) if message["role"] == "assistant" else message["content"]
+                st.markdown(content)
             if metadata.get("diagnostic"):
                 with st.expander("本步诊断"):
                     st.write(metadata["diagnostic"])
@@ -115,10 +187,14 @@ def conversation():
         readiness = service.execution_readiness(task_id)
         pending = service.database.active_queue_items(task_id)
         if polling and not pending:
-            # Stop timed rerenders once the submitted job completes.
-            st.rerun()
+            # Recompute the fragment polling interval after the queue drains.
+            st.rerun(scope="app")
         if pending:
-            labels = [f"第 {json.loads(item['payload'])['spec_version']} 版：{'正在模拟' if item['status'] == 'running' else '等待 Worker'}" for item in pending]
+            labels = []
+            for item in pending:
+                payload = json.loads(item["payload"])
+                case_name = f" · {payload['case_name']}" if payload.get("case_name") else ""
+                labels.append(f"第 {payload['spec_version']} 版{case_name}：{'正在模拟' if item['status'] == 'running' else '等待 Worker'}")
             st.info("；".join(labels) + "。完成后会自动显示结果，你仍可继续对话。")
         assumptions = readiness["unconfirmed_assumptions"]
         if assumptions:
@@ -139,9 +215,10 @@ def conversation():
         active_version = any(json.loads(item["payload"])["spec_version"] == spec.version for item in pending)
         if st.button("开始真实模拟", key="submit_hysys", type="primary",
                      disabled=not readiness["ready"] or active_version):
+            st.query_params["task"] = task_id
             with st.spinner("正在检查后端能力并提交…"):
                 application.submit_run(task_id)
-            st.rerun()
+            st.rerun(scope="app")
         if not readiness["ready"]:
             st.caption("条件尚未齐备，请在对话中补充或确认；不会自动运行。")
         with st.expander(f"当前条件与诊断 · 第 {spec.version} 版"):
@@ -161,6 +238,19 @@ def conversation():
                     right = " + ".join(f"{t.coefficient:g} {chemical_display(t.component)}" for t in reaction.products)
                     reaction_name = "甲苯歧化" if (reaction.name or "").casefold() == "toluene disproportionation" else reaction.name or "反应"
                     st.write(f"{reaction_name}：{left} → {right}")
+            if spec.operating_cases:
+                st.markdown("**稳态工况**")
+                for case in spec.operating_cases:
+                    boundaries = []
+                    if case.feed_temperature is not None:
+                        boundaries.append(f"进料温度 {case.feed_temperature:g} {case.feed_temperature_unit}")
+                    if case.feed_pressure is not None:
+                        boundaries.append(f"进料压力 {case.feed_pressure:g} {case.feed_pressure_unit}")
+                    if case.outlet_temperature is not None:
+                        boundaries.append(f"出口温度 {case.outlet_temperature:g} {case.outlet_temperature_unit}")
+                    if case.pressure is not None:
+                        boundaries.append(f"出口压力 {case.pressure:g} {case.pressure_unit}")
+                    st.write(f"{case.name}：" + ("；".join(boundaries) if boundaries else "未提供边界条件"))
             st.markdown("**建模假设**")
             for assumption in spec.assumptions:
                 label, value = assumption_display(assumption.model_dump())
@@ -171,8 +261,13 @@ def conversation():
                 st.markdown("**待补充信息**")
                 for item in spec.missing_information:
                     st.write(item.question)
+            dynamic_questions = readiness["questions"]
+            if dynamic_questions:
+                st.markdown("**本次提交前仍需确认**")
+                for item in dynamic_questions:
+                    st.write(item["question"])
             for error in readiness["errors"]:
-                st.write(error)
+                st.write(diagnostic_display(error))
         if len(runs) > 1:
             with st.expander("不同版本的出口结果对比"):
                 comparison = []
@@ -181,7 +276,8 @@ def conversation():
                     if result.get("engineering_validation_passed"):
                         for stream in result.get("streams", []):
                             if stream["name"] == "Vapour Product":
-                                comparison.append({"版本": row["spec_version"], "运行": row["run_id"][:8],
+                                comparison.append({"版本": row["spec_version"], "工况": result.get("case_name") or "默认",
+                                                   "运行": row["run_id"][:8],
                                                    "温度 °C": stream["temperature_k"] - 273.15,
                                                    "流量 kmol/h": stream["molar_flow_kmol_h"], **stream["mole_fractions"]})
                 st.caption("仅比较工程校验通过的记录。修改过的其他条件请核对各版规格。")

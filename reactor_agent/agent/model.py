@@ -97,7 +97,7 @@ class DeepSeekProvider:
 
     def parse_spec(self, request: str) -> ReactorModelSpec:
         schema = json.dumps(ReactorModelSpec.model_json_schema(), ensure_ascii=False)
-        response = self._chat(
+        data = self._json_chat(
             messages=[
                 {"role": "system", "content": (
                     "将用户化工反应需求转换为符合给定 JSON Schema 的 ReactorModelSpec。"
@@ -106,6 +106,8 @@ class DeepSeekProvider:
                     "不要补造未知参数；缺失项写入 missing_information；新任务不能继承历史条件。"
                     "用户明确给出的温度、压力、进料温度、比例等条件就是已给条件，不要再次询问或要求确认。"
                     "用户明确列出多个工况并要求比较时，默认按各工况分别报告出口流股组成；不要再问是否分开模拟或结果怎么呈现。"
+                    "用户给出多个稳态工况时，必须在operating_cases中逐项记录名称、出口温度和压力；共享进料与反应条件，不要把多个温度合并到一个target_outlet_temperature。"
+                    "如果不同工况有不同进料温度或进料压力，也必须记录在对应operating_cases的feed_temperature/feed_pressure字段；未给出时才使用共享feed字段。"
                     "只有会影响建模正确性且确实缺失、含糊或矛盾的信息才能作为澄清问题；展示格式使用默认值无需确认。"
                     "面向中文用户，澄清问题、假设理由和影响用中文表达，组分名称和协议枚举保留合法值。"
                     f"Schema: {schema}\nDomain workflow instructions:\n{self._skill_instructions()}"
@@ -114,23 +116,22 @@ class DeepSeekProvider:
             ],
             response_format={"type": "json_object"},
         )
-        content = response.choices[0].message.content
-        if not content:
-            raise ModelUnavailable("DeepSeek returned empty structured output.")
         try:
-            return ReactorModelSpec.model_validate_json(content)
+            return ReactorModelSpec.model_validate(data)
         except Exception as exc:
             raise ModelUnavailable(f"DeepSeek response did not match the model protocol: {exc}") from exc
 
     def merge_spec(self, current: ReactorModelSpec, clarification: str) -> ReactorModelSpec:
         schema = json.dumps(ReactorModelSpec.model_json_schema(), ensure_ascii=False)
-        response = self._chat(
+        data = self._json_chat(
             messages=[
                 {"role": "system", "content": (
                     "把用户本轮补充合并到当前任务规格，返回符合 Schema 的完整 JSON。"
                     "所有面向用户的自然语言字段都必须使用简体中文，包括选型依据、假设说明和待补问题；保留化学式、专名和Schema要求的枚举机器值即可。"
                     "保留未修改的已确认信息；不推断未给出的参数；新增假设需标为未确认。"
                     "用户本轮明确给出的值应直接落实，不要重复询问该值；比较工况默认逐工况报告出口流股组成。"
+                    "如果本轮修改或补充多个稳态工况，保留并更新operating_cases列表；每个工况独立保存出口温度和压力。"
+                    "如果本轮修改工况级进料温度或压力，写入对应operating_cases的feed_temperature/feed_pressure字段。"
                     "澄清问题、假设理由和影响请用中文，用户只确认部分假设时不要确认其他项。"
                     f"Schema: {schema}\nDomain workflow instructions:\n{self._skill_instructions()}"
                 )},
@@ -141,11 +142,8 @@ class DeepSeekProvider:
             ],
             response_format={"type": "json_object"},
         )
-        content = response.choices[0].message.content
-        if not content:
-            raise ModelUnavailable("DeepSeek returned empty clarification merge.")
         try:
-            merged = ReactorModelSpec.model_validate_json(content)
+            merged = ReactorModelSpec.model_validate(data)
             return merged.model_copy(update={
                 "task_id": current.task_id,
                 "version": current.version,
@@ -203,6 +201,7 @@ class DeepSeekProvider:
                     "不要提前列问题或宣称已保存条件，后续建模节点会产生完整澄清问题和选型依据。"
                     "不要编造参数、假设已被确认、运行状态或结果；只引用结构化真实结果。"
                     "recent_real_runs包含当前任务最近多版的真实记录；比较工况时应查阅这些记录而非只看最新一次。"
+                    "同一规格的多个operating_cases会被串行运行并分别返回结果；不要要求用户为每个工况另建任务。"
                     "工程校验失败的记录不能作为有效结果；规格不同的运行不能默认为相同条件。"
                     "先按真实读数核对增减方向，再解释；单个反应的平衡移动不等于耦合体系的最终组分变化。"
                     "不要用原理推断推翻已读出的真实数值；此前回答误读时应明确纠正。"

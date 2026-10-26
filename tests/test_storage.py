@@ -1,5 +1,7 @@
 from concurrent.futures import ThreadPoolExecutor
 
+import pytest
+
 from reactor_agent.domain.models import ReactorModelSpec
 
 
@@ -47,6 +49,18 @@ def test_interrupted_queue_items_can_be_recovered(database):
     assert item
     assert database.recover_interrupted_queue_items() == 1
     assert database.claim_next()["queue_id"] == item["queue_id"]
+
+
+def test_delete_task_removes_persisted_records(database):
+    spec = ReactorModelSpec(user_request="delete me")
+    database.create_task(spec)
+    database.add_chat_message(spec.task_id, "user", "hello")
+    database.audit(spec.task_id, "test", "record")
+    database.delete_task(spec.task_id)
+    with pytest.raises(KeyError):
+        database.get_spec(spec.task_id)
+    assert database.chat_messages(spec.task_id) == []
+    assert database.audit_events(spec.task_id) == []
 
 
 

@@ -51,6 +51,54 @@ def assumption_display(assumption: dict[str, Any]) -> tuple[str, str]:
     value = str(assumption["value"])
     value = ASSUMPTION_VALUES.get(value.casefold(), value)
     return label, value
+
+
+def diagnostic_display(message: str) -> str:
+    """Translate deterministic and backend diagnostics at the UI boundary."""
+    exact = {
+        "Feed pressure is required.": "必须提供进料压力。",
+        "Feed flow rate is required.": "必须提供进料流量。",
+        "Specified-temperature operation requires target_outlet_temperature.": "指定出口温度模式需要提供目标出口温度。",
+        "Specified-temperature operation requires target_outlet_temperature or an outlet temperature for every operating case.": "指定出口温度模式需要提供目标出口温度，或为每个工况提供出口温度。",
+        "Specified-temperature operation requires target_outlet_temperature or an outlet temperature for every operating case.": "指定出口温度模式需要提供目标出口温度，或为每个工况提供出口温度。",
+        "Specify target_pressure, including an explicit zero-pressure-drop assumption if appropriate.": "请提供目标压力；如适用，请明确确认压降为零。",
+        "This adapter currently verifies only Peng-Robinson; confirm a suitable property method.": "当前适配器仅验证 Peng–Robinson 物性方法，请确认采用适用的物性方法。",
+        "Only explicitly specified vapor-phase conversion reactions are currently verified.": "当前仅验证明确指定为气相的转化率反应。",
+        "Each conversion reaction requires an explicit reactant basis_component.": "每个转化率反应都必须明确指定反应物基准组分。",
+        "Only a single conversion reaction has been verified in this adapter.": "当前适配器仅验证单个转化率反应。",
+        "Conversion reactor requires a specified conversion or confirmed assumption.": "转化率反应器需要明确转化率或已确认的转化率假设。",
+        "This reactor adapter cannot increase pressure above the inlet pressure.": "当前反应器适配器不能将压力提高到高于进料压力。",
+    }
+    translated = message
+    for source, target in exact.items():
+        translated = translated.replace(source, target)
+    translated = re.sub(r"^configure_basis:\s*HysysAdapterError:\s*", "配置物性基础：HYSYS 适配器错误：", translated)
+    translated = re.sub(r"^configure_streams:\s*HysysAdapterError:\s*", "配置物流：HYSYS 适配器错误：", translated)
+    translated = re.sub(r"^configure_reactor:\s*HysysAdapterError:\s*", "配置反应器：HYSYS 适配器错误：", translated)
+    translated = re.sub(r"^solve:\s*HysysAdapterError:\s*", "求解：HYSYS 适配器错误：", translated)
+    if translated != message:
+        message = translated
+    translated = re.sub(
+        r"Component flow constraint ([^\n]+?) requires a positive feed composition entry\.",
+        lambda match: f"组分流量约束 {match.group(1)} 要求进料组成中存在正值。", message)
+    translated = re.sub(
+        r"Assumption '([^']+)' requires user confirmation\.",
+        lambda match: f"假设“{assumption_display({'key': match.group(1), 'value': '待确认'})[0]}”仍需用户确认。", translated)
+    translated = re.sub(
+        r"Missing ([^:]+): ([^\n]+)",
+        lambda match: f"缺少{'进料流量' if match.group(1) == 'feed.flow' else '进料压力' if match.group(1) == 'feed.pressure' else match.group(1)}：{match.group(2)}", translated)
+    message = translated
+    replacements = {
+        "target_outlet_temperature": "目标出口温度", "target_pressure": "目标压力",
+        "thermal_mode": "热模式", "basis_component": "基准组分",
+        "HYSYS solver has not confirmed convergence.": "HYSYS 尚未确认求解收敛。",
+        "No stream results were read from HYSYS.": "未从 HYSYS 读取到物流结果。",
+        "Expected one inlet and both vapor/liquid boundary outlets.": "HYSYS 结果应包含一个进料口以及气相、液相两个边界出口。",
+    }
+    translated = message
+    for source, target in replacements.items():
+        translated = translated.replace(source, target)
+    return translated
 INDEPENDENT_SCENARIO = re.compile(
     r"(?:新(?:的)?(?:测试)?(?:场景|任务)|另一个(?:测试)?场景).{0,30}(?:无关|独立|不要沿用|不继承|别带入|不带入)|"
     r"(?:无关|独立|不要沿用|不继承|别带入|不带入).{0,30}(?:新(?:的)?(?:测试)?(?:场景|任务)|之前的场景)", re.I)
@@ -73,6 +121,9 @@ class ChatApplication:
             lines.append(f"当前建议采用 **{REACTOR_NAMES.get(spec.reactor_type, spec.reactor_type)}**。")
             if spec.reactor_rationale:
                 lines.append(spec.reactor_rationale)
+        if len(spec.operating_cases) > 1:
+            cases = "、".join(case.name for case in spec.operating_cases)
+            lines.append(f"已登记 {len(spec.operating_cases)} 个稳态工况（{cases}），提交后将在同一任务内串行运行并分别返回出口流股组成。")
         questions = list(dict.fromkeys(item["question"] for item in readiness["questions"]))
         if questions:
             lines.append("接下来请补充这些条件，可以一次回答多项：\n\n" +
@@ -84,7 +135,7 @@ class ChatApplication:
         elif not questions and not readiness["unconfirmed_assumptions"]:
             # A deterministic validation error is not always a missing user input.
             lines.append("当前不能开始模拟，具体检查结果：")
-            lines.extend(f"{i}. {error}" for i, error in enumerate(readiness["errors"], 1))
+            lines.extend(f"{i}. {diagnostic_display(error)}" for i, error in enumerate(readiness["errors"], 1))
             if any("provide product selectivity" in error for error in readiness["errors"]):
                 confirmed_distribution = next((item for item in spec.assumptions
                     if item.confirmed_by_user and any(token in item.key.casefold()
@@ -176,8 +227,13 @@ class ChatApplication:
             output = self.service.resolve_input(task_id, "", keys)
             if output.get("status") == "model_unavailable":
                 raise RuntimeError("模型暂时无法完成补参；已保存确认记录，请稍后继续。")
-            self.database.add_chat_message(task_id, "assistant", self.task_reply(task_id, "已记录你的确认，并重新核对建模条件。"),
-                {"kind": "spec_update", "spec_version": self.database.get_spec(task_id).version})
+            new_spec = self.database.get_spec(task_id)
+            confirmation_note = (
+                f"已记录你的确认，并重新核对建模条件。此次确认生成第 **{new_spec.version}** 版条件快照，"
+                "用于保留确认前后的可追溯记录；此前版本不会被覆盖。"
+            )
+            self.database.add_chat_message(task_id, "assistant", self.task_reply(task_id, confirmation_note),
+                {"kind": "spec_update", "spec_version": new_spec.version})
         except Exception as exc:
             self._record_error(task_id, exc)
 
@@ -195,8 +251,11 @@ class ChatApplication:
         try:
             queue_id = self.service.queue_execution(task_id)
             spec = self.database.get_spec(task_id)
+            case_note = ""
+            if spec.operating_cases:
+                case_note = f"，共 {len(spec.operating_cases)} 个工况，将在同一任务中串行运行"
             self.database.add_chat_message(task_id, "assistant",
-                (prefix + "\n\n" if prefix else "") + f"已提交第 **{spec.version}** 版条件，正在等待 HYSYS 运行。完成后结果会自动显示在这段对话中。",
+                (prefix + "\n\n" if prefix else "") + f"已提交第 **{spec.version}** 版条件{case_note}，正在等待 HYSYS 运行。完成后结果会自动显示在这段对话中。",
                 {"kind": "queued", "queue_id": queue_id, "spec_version": spec.version}, event_key="queued:" + queue_id)
         except Exception as exc:
             self._record_error(task_id, exc)
@@ -212,7 +271,9 @@ class ChatApplication:
         for row in reversed(self.database.list_runs(task_id)):
             if "run:" + row["run_id"] in existing:
                 continue
-            self.database.add_chat_message(task_id, "assistant", f"HYSYS 第 **{row['spec_version']}** 版运行记录已返回。",
+            case_note = f"（工况：{row['payload'].get('case_name')}）" if row["payload"].get("case_name") else ""
+            self.database.add_chat_message(task_id, "assistant",
+                f"HYSYS 第 **{row['spec_version']}** 版运行记录已返回{case_note}（本任务历史记录）。",
                 {"kind": "run_result", "run_id": row["run_id"], "spec_version": row["spec_version"]},
                 event_key="run:" + row["run_id"])
 

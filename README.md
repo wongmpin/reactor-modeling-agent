@@ -41,9 +41,9 @@ DEEPSEEK_MODEL=deepseek-flash
 .\scripts\start.ps1
 ```
 
-启动脚本一次启动 Streamlit、MCP 和 SQLite 队列消费者，仅本机访问。打开输出的 URL（默认 `http://127.0.0.1:8501`，被占用时顺延）。主界面是多轮对话：输入反应需求 → 助手询问缺参并解释选型 → 在同一对话回答问题或逐项勾选确认假设 → 点击“开始真实模拟”（也可明确回复运行）→ 真实结果自动加入对话。对话回复通过 DeepSeek SSE 分块生成并即时显示；Streamlit 页面使用其原生连接向浏览器刷新内容。可继续问“为什么选择这个反应器？”或说“保留其他条件，出口温度改为600°C”，参数修改生成新规格版本，解释性提问不修改规格。
+启动脚本一次启动 Streamlit、MCP 和 SQLite 队列消费者，仅本机访问。打开输出的 URL（默认 `http://127.0.0.1:8501`，被占用时顺延）。主界面是多轮对话：输入反应需求 → 助手询问缺参并解释选型 → 在同一对话回答问题或逐项勾选确认假设 → 点击“开始真实模拟”（也可明确回复运行）→ 真实结果自动加入对话。对话回复通过 DeepSeek SSE 分块生成并即时显示；Streamlit 页面使用其原生连接向浏览器刷新内容。一次需求中列出多个稳态工况时，系统在同一任务内建立 `operating_cases`，串行提交独立 HYSYS 案例并按工况分别显示结果，不把两个出口温度写入同一个操作单元。可继续问“为什么选择这个反应器？”或说“保留其他条件，出口温度改为600°C”，参数修改生成新规格版本，解释性提问不修改规格。
 
-左侧“＋ 新建对话”建立独立任务，不继承参数；“历史对话”恢复已保存的消息、规格和运行。URL 带任务标识，刷新后可继续。当前条件/诊断、版本对比、案例下载及完整任务导出折叠显示，聊天不代替结构化规格或运行记录。历史任务首次使用聊天界面时仅显示明确标注的恢复说明，不伪造之前的对话。
+左侧“＋ 新建对话”建立独立任务，不继承参数；“历史对话”以紧凑列表显示任务标题、状态、条件版本和短 ID，点击任务名恢复已保存的消息、规格和运行。每行的删除图标会在二次确认后删除该任务的规格、消息、队列、运行和审计记录；正在运行的任务不能删除，已保存的 HYSYS 案例文件会保留。多工况使用 `operating_cases` 列表逐项执行，支持任意数量；每个工况可以覆盖共享进料温度/压力，也可以使用各自的进料温度/压力、出口温度/压力。URL 带任务标识，刷新后可继续。当前条件/诊断、版本对比、案例下载及完整任务导出折叠显示，聊天不代替结构化规格或运行记录。历史任务首次使用聊天界面时仅显示明确标注的恢复说明，不伪造之前的对话。
 
 MCP 端点默认 `http://127.0.0.1:8765/mcp`。外部 MCP 客户端可复用与 UI 相同的应用服务：能力查询、结构化校验、新建/补参、规格版本查询、提交运行、结果和审计查询；不提供任意脚本或 COM 调用。
 
@@ -84,6 +84,13 @@ $env:RUN_HYSYS_INTEGRATION='1'
 - `docs/technical-report.md` 与 `output/pdf/technical-report.pdf`：两页技术报告。
 - `docs/evidence/`：去除密钥的实际结果与规格快照。原始 `.hsc` 保存在本机 `data/cases/`。
 
-本地 Git 已初始化。GitHub 仓库地址/账号尚未指定，未擅自发布。运行录屏由用户完成；AI可见会话记录已导出到本机 `data/deliverables/ai-development-session.md`，可用 `scripts/export_session.py` 更新。
+GitHub 私有仓库：https://github.com/wongmpin/reactor-modeling-agent 。具有访问权限的账号可克隆完整代码、测试、启动脚本与文档：
+
+```powershell
+git clone https://github.com/wongmpin/reactor-modeling-agent.git
+cd reactor-modeling-agent
+```
+
+克隆后按上文安装依赖并在本机配置 `.env`。密钥、本地数据库、日志及 HYSYS 案例不随仓库上传。运行录屏由用户完成；AI可见会话记录已导出到本机 `data/deliverables/ai-development-session.md`，可用 `scripts/export_session.py` 更新。
 
 官方参考：DeepSeek `https://api-docs.deepseek.com/quick_start/pricing`、`/guides/tool_calls`、`/guides/json_mode`；HYSYS 本机帮助位于 `C:\ProgramData\AspenTech\Aspen HYSYS V15.0\HtmlHelp`，特别是 Customization FAQ 与 Key HYSYS Objects。

@@ -1,18 +1,20 @@
 # 化工反应器建模 Agent 技术报告
 
-2026-10-25 · 本地 Windows / Aspen HYSYS V15 / DeepSeek V4.1 Flash
+2026-10-26 · 本地 Windows / Aspen HYSYS V15 / DeepSeek V4.1 Flash
 
 ## 目标与方案
 
-系统将自然语言需求转为结构化模型规格，由 DeepSeek 根据反应特征、可用数据和领域规则判断反应器，并解释依据。Harness 检查数据充分性、假设确认、后端支持范围和版本对应的模型决策；不会按场景名映射反应器，也不会把不支持的模型静默替换。Streamlit 通过应用服务读写任务，不直接访问 COM。LangGraph 管理解析、选型、校验、补参 interrupt/resume、执行、独立结果校验和最多两次可重试调用。
+系统将自然语言需求转为结构化模型规格，由 DeepSeek 根据反应特征、可用数据和领域规则判断反应器，并解释依据。Harness 检查数据充分性、假设确认、后端支持范围和版本对应的模型决策；不会按场景名映射反应器，也不会把不支持的模型静默替换。Streamlit 通过应用服务读写任务，不直接访问 COM。LangGraph 管理解析、选型、校验、补参 interrupt/resume、执行、独立结果校验和有限重试。模型回复使用流式 API；流内容只有在完整 JSON 校验后才作为对话结果保存。
 
-首版采用 Python 3.12、Pydantic/Pint、LangGraph、Streamlit、FastMCP 和 SQLite。SQLite 的 WAL、busy timeout 和短事务适合单机跨进程队列，省去数据库服务器、Redis 和容器依赖。任务规格、不可变版本、运行、checkpoint 与审计分别保存；聊天文本不充当建模数据。MCP 提供领域 Schema 工具，Skill 提供领域步骤，Harness 管权限与校验，Worker/Adapter 执行实际模拟。
+首版采用 Python 3.12、Pydantic/Pint、LangGraph、Streamlit、MCP 和 SQLite。SQLite 的 WAL、busy timeout 和短事务适合单机跨进程队列，省去数据库服务器、Redis 和容器依赖。任务规格、不可变版本、运行、checkpoint 与审计分别保存；聊天文本不充当建模数据。MCP 提供领域 Schema 工具，Skill 提供领域步骤，Harness 管权限与校验，Worker/Adapter 执行实际模拟。历史对话按任务隔离，可恢复、筛选和在确认后删除；规格、消息、运行与审计一并清理，已保存的 HYSYS 案例独立保留。
 
 ## HYSYS 探索与解决
 
 本机 COM 注册到 HYSYS V15，实测版本为 Aspen HYSYS Version 15 (41.0)。初期错误来自显示名称与内部标识混淆：物性包应使用 PengRob，反应器操作应使用 ConversionReactorOp / GibbsReactorOp。新案例初始处于 basis mode，必须完成物性包与反应关联并 EndBasisChange，才能写物流参数。将 E_INVALIDARG 或 E_ACCESSDENIED 当作环境完全不可用是不正确的，需结合本地官方帮助和逐步读回验证。
 
 实现每次从空案例新建独立模型、设置组分/反应/边界、读取物流、保存案例；每个 COM 会话使用独立子进程 STA 主线程，Windows 文件锁在进程间串行保护会话。COM 对象与脚本执行不暴露给模型。每次结果分别记录 case_created、solver_converged、engineering_validation_passed，求解收敛需操作 CalcLevel=500、输出已知、求解停止且无变量不一致，之后再检查元素守恒、流量、转化率和出口温压。超时终止 Python Worker，但不强杀用户 HYSYS；需检查 HYSYS 是否仍在计算。
+
+多工况由模型写入 operating_cases 列表，队列逐项创建独立负载并串行执行，不限定两个工况。每个工况可覆盖共享进料温度/压力及出口温度/压力。一次校验遗漏工况温度而只检查全局目标值，导致条件齐全仍被阻止；已改为按工况逐项检查，队列执行规格使用对应边界，并由列表型协议和独立进料边界测试覆盖。
 
 ## 实测结果与可信范围
 
@@ -25,5 +27,7 @@ DeepSeek官方当前文档列出deepseek-flash对应V4.1 Flash 1017并支持JSON
 ## 验证与交付边界
 
 离线测试覆盖单位、反应/边界守恒、缺参、选择性、任务版本隔离、SQLite原子队列、interrupt/resume、有限重试、模型决策版本授权、MCP Schema和Streamlit恢复交互；实机测试覆盖四组真实求解/重开与未知组分故障，另有自然语言到模型选型再到真实求解验证。测试方法区分固定反应器的Adapter集成测试与真正模型选型链路。
+
+近期用户运行中出现 HYSYS `inspect` 超过 30 秒。检查确认该请求停在提交前能力探测：任务没有新增队列项或运行记录，因此没有开始建模/求解。Worker 超时会结束 Python Worker，而 HYSYS 可能仍在计算；处理方式是先检查 HYSYS 是否空闲再重试，不把该错误误报为模拟失败或真实结果。多工况进料条件漏校验、组分名/化学式不一致、确认的二甲苯拆分未同步允许物种等问题，分别通过规格归一化、逐工况校验和仅在用户确认后展开异构体列表修正。
 
 当前支持PR物性包、气相单反应conversion与指定物种Gibbs；equilibrium、CSTR/PFR、多条conversion顺序/竞争反应、固相/电解质和动态工况未纳入已验证能力。尤其equilibrium的LnKSource写入与读回不一致，未据此宣称支持。GitHub远程仓库发布、现场工艺假设确认、视频录制由用户完成。已附启动/关闭脚本、演示单、可脱敏导出的AI开发记录和实测证据。

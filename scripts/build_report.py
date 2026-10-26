@@ -3,16 +3,16 @@ from pathlib import Path
 from xml.sax.saxutils import escape
 from reportlab.pdfgen.canvas import Canvas
 from reportlab.pdfbase import pdfmetrics
-from reportlab.pdfbase.cidfonts import UnicodeCIDFont
+from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, PageBreak
 from reportlab.lib.styles import ParagraphStyle
 from reportlab.lib import colors
 from reportlab.lib.enums import TA_LEFT
 
 root = Path(__file__).resolve().parents[1]
-pdfmetrics.registerFont(UnicodeCIDFont("STSong-Light"))
+pdfmetrics.registerFont(TTFont("ReportCJK", r"C:\Windows\Fonts\simhei.ttf"))
 source = (root / "docs/technical-report.md").read_text(encoding="utf-8")
-style = ParagraphStyle("body", fontName="STSong-Light", fontSize=10.2, leading=16.2, wordWrap="CJK", spaceAfter=9)
+style = ParagraphStyle("body", fontName="ReportCJK", fontSize=10.2, leading=16.2, wordWrap="CJK", spaceAfter=9)
 heading = ParagraphStyle("heading", parent=style, fontSize=13, leading=19, textColor=colors.HexColor("#14536a"), spaceBefore=10, spaceAfter=7)
 title = ParagraphStyle("title", parent=style, fontSize=23, leading=30, spaceAfter=10, textColor=colors.HexColor("#123c50"))
 story = []
@@ -29,9 +29,9 @@ for block in source.split("\n\n"):
 def footer(canvas, doc):
     canvas.setStrokeColor(colors.HexColor("#b5c7ce"))
     canvas.line(42, 34, 553, 34)
-    canvas.setFont("STSong-Light", 8)
+    canvas.setFont("ReportCJK", 8)
     canvas.setFillColor(colors.HexColor("#49636e"))
-    canvas.drawString(42, 22, "本地实机验证 · 2026-10-25 · 测试假设需现场确认")
+    canvas.drawString(42, 22, "本地实机验证 · 2026-10-26 · 测试假设需现场确认")
     canvas.drawRightString(553, 22, str(doc.page))
 
 out = root / "output/pdf/technical-report.pdf"
