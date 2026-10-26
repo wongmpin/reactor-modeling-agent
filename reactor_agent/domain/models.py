@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from enum import StrEnum
-from typing import Any
+from typing import Any, Literal
 from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -37,16 +37,16 @@ class ChemicalSpecies(StrictModel):
 
 
 class ComponentFraction(ChemicalSpecies):
-    value: float = Field(ge=0, le=1)
+    value: float = Field(ge=0, le=1, description="Normalized composition fraction, not a component flow rate")
 
 
 class FeedStream(StrictModel):
     name: str = "Feed"
     components: list[ComponentFraction] = Field(min_length=1)
-    composition_basis: str = "mole_fraction"
+    composition_basis: Literal["mole_fraction", "mass_fraction"] = "mole_fraction"
     flow: float | None = Field(default=None, gt=0)
     flow_unit: str = "kmol/h"
-    flow_basis: str = "molar"
+    flow_basis: Literal["molar", "mass"] = "molar"
     component_mass_flows_kg_h: dict[str, float] = Field(default_factory=dict,
         description="Explicit component feed-rate constraints, e.g. annual throughput / operating hours; total flow may be derived from these and composition using simulator molecular weights")
     temperature: float | None = None
@@ -62,21 +62,6 @@ class FeedStream(StrictModel):
             raise ValueError("Component mass-flow constraints must be finite and positive")
         return value
 
-    @field_validator("flow_basis")
-    @classmethod
-    def supported_basis(cls, value: str) -> str:
-        if value not in {"molar", "mass"}:
-            raise ValueError("flow_basis must be 'molar' or 'mass'")
-        return value
-
-    @field_validator("composition_basis")
-    @classmethod
-    def supported_composition_basis(cls, value: str) -> str:
-        if value not in {"mole_fraction", "mass_fraction"}:
-            raise ValueError("composition_basis must be 'mole_fraction' or 'mass_fraction'")
-        return value
-
-
 class ReactionTerm(StrictModel):
     component: str = Field(min_length=1)
     formula: str = Field(min_length=1)
@@ -87,9 +72,16 @@ class ReactionSpec(StrictModel):
     name: str | None = None
     reactants: list[ReactionTerm] = Field(min_length=1)
     products: list[ReactionTerm] = Field(min_length=1)
-    phase: str | None = None
+    phase: str | None = Field(default=None, description="Reaction phase; use vapor for an explicitly stated gas phase")
     basis_component: str | None = None
     conversion: float | None = Field(default=None, ge=0, le=1)
+
+    @field_validator("phase", mode="before")
+    @classmethod
+    def normalize_explicit_phase(cls, value):
+        if isinstance(value, str) and value.strip().casefold() in {"气相", "气体", "vapor", "vapour", "gas"}:
+            return "vapor"
+        return value
 
 
 class KnownParameters(StrictModel):

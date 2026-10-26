@@ -19,6 +19,28 @@ from reactor_agent.domain.validation import (
 )
 
 
+def test_explicit_gas_phase_aliases_pass_backend_without_accepting_unknown_phase():
+    from reactor_agent.domain.validation import validate_backend_spec
+    spec = water_gas_shift_spec()
+    spec.thermo.property_package = "Peng-Robinson"
+    spec.known_parameters.thermal_mode = "specified_temperature"
+    spec.known_parameters.target_outlet_temperature = 300
+    spec.known_parameters.target_pressure = 10
+    spec.reactor_type = ReactorType.CONVERSION
+    for phase in ["气相", "气体", "Vapour", "GAS", " vapor "]:
+        payload = spec.model_dump(mode="json")
+        payload["reactions"][0]["phase"] = phase
+        restored = ReactorModelSpec.model_validate(payload)
+        assert restored.reactions[0].phase == "vapor"
+        assert not any("vapor-phase" in e for e in validate_backend_spec(restored).errors)
+    for phase in [None, "未知", "liquid"]:
+        payload = spec.model_dump(mode="json")
+        payload["reactions"][0]["phase"] = phase
+        restored = ReactorModelSpec.model_validate(payload)
+        assert restored.reactions[0].phase == phase
+        assert any("vapor-phase" in e for e in validate_backend_spec(restored).errors)
+
+
 def water_gas_shift_spec(**overrides):
     payload = {
         "feed": FeedStream(

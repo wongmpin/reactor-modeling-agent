@@ -129,6 +129,23 @@ def test_model_failure_preserves_message_and_can_retry(chat):
     assert chat.database.get_spec(task_id).version == 2
 
 
+def test_spec_protocol_failure_keeps_task_and_records_specific_diagnostic(chat):
+    from reactor_agent.agent.model import ModelUnavailable
+
+    diagnostic = "模型输出不符合建模规格协议。进料组分组成分数：不能使用组分流量。"
+    def fail(request):
+        raise ModelUnavailable(diagnostic)
+    chat.service.provider.parse_spec = fail
+    task_id = chat.send(None, "CO 100 kmol/h、H2 350 kmol/h")
+    assert chat.database.get_spec(task_id).version == 1
+    message = chat.database.chat_messages(task_id)[-1]
+    assert message["metadata"]["diagnostic"] == diagnostic
+    assert not chat.database.active_queue_items(task_id)
+    assert not chat.database.list_runs(task_id)
+    events = chat.database.audit_events(task_id)
+    assert any(e["event_type"] == "model_diagnostic" and diagnostic in e["summary"] for e in events)
+
+
 def test_persistent_transcript_dedup_and_task_isolation(chat):
     first = chat.send(None, "first")
     second = chat.send(None, "second")

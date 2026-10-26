@@ -173,6 +173,8 @@ class ReactorAgentService:
             self.database.audit(task_id, "model_decision", json.dumps({"model": getattr(self.provider, "model", os.getenv("DEEPSEEK_MODEL", "deepseek-flash")),
                 "spec_hash": Harness.fingerprint(spec), "version": spec.version, "reactor": output["spec"].get("reactor_type"), "rationale": output["spec"].get("reactor_rationale")}, ensure_ascii=False))
         self.database.audit(task_id, "workflow_finished", f"Workflow status: {output.get('status', 'unknown')}")
+        if output.get("status") == "model_unavailable":
+            self.database.audit(task_id, "model_diagnostic", json.dumps(output.get("diagnostics", []), ensure_ascii=False))
         return output
 
     def validate_spec_json(self, spec_json: str) -> dict[str, Any]:

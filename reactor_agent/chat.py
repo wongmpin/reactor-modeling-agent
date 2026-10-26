@@ -58,6 +58,8 @@ def diagnostic_display(message: str) -> str:
     exact = {
         "Feed pressure is required.": "必须提供进料压力。",
         "Feed flow rate is required.": "必须提供进料流量。",
+        "DEEPSEEK_API_KEY is not configured.": "未配置模型 API Key，请检查本机环境配置。",
+        "DeepSeek returned invalid/empty JSON after two attempts.": "模型连续两次返回空内容或无效 JSON，规格解析未完成，请重试。",
         "Specified-temperature operation requires target_outlet_temperature.": "指定出口温度模式需要提供目标出口温度。",
         "Specified-temperature operation requires target_outlet_temperature or an outlet temperature for every operating case.": "指定出口温度模式需要提供目标出口温度，或为每个工况提供出口温度。",
         "Specified-temperature operation requires target_outlet_temperature or an outlet temperature for every operating case.": "指定出口温度模式需要提供目标出口温度，或为每个工况提供出口温度。",
@@ -72,6 +74,11 @@ def diagnostic_display(message: str) -> str:
     translated = message
     for source, target in exact.items():
         translated = translated.replace(source, target)
+    translated = re.sub(r"DeepSeek API request failed \(([^)]+)\)\.",
+        lambda match: "模型 API 请求失败（" + {
+            "APITimeoutError": "请求超时", "APIConnectionError": "连接失败",
+            "AuthenticationError": "身份认证失败", "RateLimitError": "请求限流或额度不足",
+        }.get(match.group(1), "服务调用异常") + "），请检查连接或配置后重试。", translated)
     translated = re.sub(r"^configure_basis:\s*HysysAdapterError:\s*", "配置物性基础：HYSYS 适配器错误：", translated)
     translated = re.sub(r"^configure_streams:\s*HysysAdapterError:\s*", "配置物流：HYSYS 适配器错误：", translated)
     translated = re.sub(r"^configure_reactor:\s*HysysAdapterError:\s*", "配置反应器：HYSYS 适配器错误：", translated)
@@ -200,7 +207,7 @@ class ChatApplication:
                 else:
                     output = self.service.resolve_input(task_id, text, [])
                 if output.get("status") == "model_unavailable":
-                    raise RuntimeError("模型暂时无法完成规格解析，请稍后重试。")
+                    raise RuntimeError("\n".join(output.get("diagnostics") or ["模型暂时无法完成规格解析，请稍后重试。"]))
                 spec = self.database.get_spec(task_id)
                 prefix = "已根据你刚才描述的新场景创建独立任务，只使用该场景的信息；旧任务的规格和运行结果未带入。" if independent_task else decision.reply
                 self.database.add_chat_message(task_id, "assistant", self.task_reply(task_id, prefix),
@@ -226,7 +233,7 @@ class ChatApplication:
         try:
             output = self.service.resolve_input(task_id, "", keys)
             if output.get("status") == "model_unavailable":
-                raise RuntimeError("模型暂时无法完成补参；已保存确认记录，请稍后继续。")
+                raise RuntimeError("\n".join(output.get("diagnostics") or ["模型暂时无法完成补参；已保存确认记录，请稍后继续。"]))
             new_spec = self.database.get_spec(task_id)
             confirmation_note = (
                 f"已记录你的确认，并重新核对建模条件。此次确认生成第 **{new_spec.version}** 版条件快照，"
@@ -263,7 +270,7 @@ class ChatApplication:
     def _record_error(self, task_id: str, exc: Exception) -> None:
         self.database.add_chat_message(task_id, "assistant",
             "这一步暂时没有完成，已保留当前条件和你的消息。请查看诊断后重试，或继续补充条件。",
-            {"kind": "error", "diagnostic": str(exc)})
+            {"kind": "error", "diagnostic": diagnostic_display(str(exc))})
         self.database.audit(task_id, "chat_error", type(exc).__name__)
 
     def sync_results(self, task_id: str) -> None:

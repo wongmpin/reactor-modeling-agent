@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from openai import OpenAI
+from pydantic import ValidationError
 
 from reactor_agent.domain.models import ReactorModelSpec, ReactorType
 
@@ -16,6 +17,16 @@ class ModelUnavailable(RuntimeError):
 
 
 class DeepSeekProvider:
+    FEED_INSTRUCTIONS = (
+        "进料components[].value只能是0到1之间的组成分数，不能填组分流量或未归一化比例。"
+        "composition_basis只能是mole_fraction或mass_fraction；molar/mass仅用于flow_basis。"
+        "用户给全体进料组分同一基准的流量时，先统一单位，将流量求和写入feed.flow，"
+        "各组分流量除以总量后写入组成分数，并设置匹配的流量单位和组成基准。"
+        "例如A为20 kmol/h、B为80 kmol/h，总流量100 kmol/h，摩尔分数为0.2和0.8。"
+        "质量流量同理使用质量分数；质量与摩尔基准混合、组分不全或单位不明确时应澄清，"
+        "不得擅自把任意大于1的数值归一化或假设缺失流量。"
+    )
+
     def __init__(self, api_key: str | None = None, base_url: str | None = None, model: str | None = None):
         self.api_key = api_key if api_key is not None else os.getenv("DEEPSEEK_API_KEY", "")
         self.base_url = base_url or os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
@@ -55,6 +66,52 @@ class DeepSeekProvider:
             except (ValueError, TypeError):
                 if attempt == 1:
                     raise ModelUnavailable("DeepSeek returned invalid/empty JSON after two attempts.")
+
+    @staticmethod
+    def _protocol_diagnostic(exc: ValidationError) -> str:
+        messages = []
+        for error in exc.errors(include_input=False, include_url=False, include_context=False)[:6]:
+            location = error["loc"]
+            if location[:2] == ("feed", "components") and location[-1:] == ("value",):
+                label = "进料组分组成分数"
+                reason = "必须是0到1之间的数值，不能使用组分流量或未归一化比例"
+            elif location == ("feed", "composition_basis"):
+                label, reason = "进料组成基准", "必须明确为摩尔分数或质量分数"
+            else:
+                label = {"feed": "进料", "reactions": "反应", "known_parameters": "已知参数",
+                         "operating_cases": "工况", "thermo": "物性", "assumptions": "假设",
+                         "missing_information": "待补条件"}.get(location[0] if location else "", "规格")
+                reason = {"missing": "缺少协议要求的字段", "extra_forbidden": "包含协议不支持的字段",
+                          "enum": "取值不在协议允许范围内", "finite_number": "数值必须有限"}.get(
+                              error["type"], "字段类型、格式或取值不符合协议")
+            message = f"{label}：{reason}。"
+            if message not in messages:
+                messages.append(message)
+        return " ".join(messages)
+
+    def _spec_chat(self, **kwargs) -> ReactorModelSpec:
+        messages = list(kwargs.pop("messages"))
+        for attempt in range(2):
+            data = self._json_chat(messages=messages, **kwargs)
+            try:
+                return ReactorModelSpec.model_validate(data)
+            except ValidationError as exc:
+                diagnostic = self._protocol_diagnostic(exc)
+                if attempt == 1:
+                    raise ModelUnavailable(
+                        "模型输出不符合建模规格协议，自动纠正一次后仍未通过。" + diagnostic
+                        + " 当前规格未覆盖，本次请求未提交到 HYSYS；请重试解析。"
+                    ) from exc
+                # Return schema errors to the model; do not guess or silently coerce process inputs.
+                errors = exc.errors(include_input=False, include_url=False, include_context=False)
+                messages.extend([
+                    {"role": "assistant", "content": json.dumps(data, ensure_ascii=False)},
+                    {"role": "user", "content": (
+                        "上次输出未通过协议校验，请仅根据原始用户条件纠正并返回完整JSON。"
+                        "保留已确认条件，不能更改转化率、反应器选择或编造缺失参数。"
+                        + self.FEED_INSTRUCTIONS + " 校验错误：" + json.dumps(errors, ensure_ascii=False)
+                    )},
+                ])
 
     @staticmethod
     def _streamed_json_string(content: str, field: str, emitted: int) -> tuple[str, int]:
@@ -97,7 +154,7 @@ class DeepSeekProvider:
 
     def parse_spec(self, request: str) -> ReactorModelSpec:
         schema = json.dumps(ReactorModelSpec.model_json_schema(), ensure_ascii=False)
-        data = self._json_chat(
+        return self._spec_chat(
             messages=[
                 {"role": "system", "content": (
                     "将用户化工反应需求转换为符合给定 JSON Schema 的 ReactorModelSpec。"
@@ -110,20 +167,16 @@ class DeepSeekProvider:
                     "如果不同工况有不同进料温度或进料压力，也必须记录在对应operating_cases的feed_temperature/feed_pressure字段；未给出时才使用共享feed字段。"
                     "只有会影响建模正确性且确实缺失、含糊或矛盾的信息才能作为澄清问题；展示格式使用默认值无需确认。"
                     "面向中文用户，澄清问题、假设理由和影响用中文表达，组分名称和协议枚举保留合法值。"
-                    f"Schema: {schema}\nDomain workflow instructions:\n{self._skill_instructions()}"
+                    f"{self.FEED_INSTRUCTIONS}\nSchema: {schema}\nDomain workflow instructions:\n{self._skill_instructions()}"
                 )},
                 {"role": "user", "content": request},
             ],
             response_format={"type": "json_object"},
         )
-        try:
-            return ReactorModelSpec.model_validate(data)
-        except Exception as exc:
-            raise ModelUnavailable(f"DeepSeek response did not match the model protocol: {exc}") from exc
 
     def merge_spec(self, current: ReactorModelSpec, clarification: str) -> ReactorModelSpec:
         schema = json.dumps(ReactorModelSpec.model_json_schema(), ensure_ascii=False)
-        data = self._json_chat(
+        merged = self._spec_chat(
             messages=[
                 {"role": "system", "content": (
                     "把用户本轮补充合并到当前任务规格，返回符合 Schema 的完整 JSON。"
@@ -133,7 +186,7 @@ class DeepSeekProvider:
                     "如果本轮修改或补充多个稳态工况，保留并更新operating_cases列表；每个工况独立保存出口温度和压力。"
                     "如果本轮修改工况级进料温度或压力，写入对应operating_cases的feed_temperature/feed_pressure字段。"
                     "澄清问题、假设理由和影响请用中文，用户只确认部分假设时不要确认其他项。"
-                    f"Schema: {schema}\nDomain workflow instructions:\n{self._skill_instructions()}"
+                    f"{self.FEED_INSTRUCTIONS}\nSchema: {schema}\nDomain workflow instructions:\n{self._skill_instructions()}"
                 )},
                 {"role": "user", "content": json.dumps({
                     "current_spec": current.model_dump(mode="json"),
@@ -142,15 +195,11 @@ class DeepSeekProvider:
             ],
             response_format={"type": "json_object"},
         )
-        try:
-            merged = ReactorModelSpec.model_validate(data)
-            return merged.model_copy(update={
-                "task_id": current.task_id,
-                "version": current.version,
-                "parent_version": current.parent_version,
-            })
-        except Exception as exc:
-            raise ModelUnavailable(f"Clarification did not match the model protocol: {exc}") from exc
+        return merged.model_copy(update={
+            "task_id": current.task_id,
+            "version": current.version,
+            "parent_version": current.parent_version,
+        })
 
     def select_reactor(self, spec: ReactorModelSpec) -> tuple[ReactorType, str]:
         choices = ", ".join(item.value for item in ReactorType)
